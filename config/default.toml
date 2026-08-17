@@ -1,0 +1,18 @@
+[general]
+protocol_version = 1
+
+[frontend]
+immersive_mode = false
+
+[world]
+default_room = "hub"
+
+[telemetry]
+enabled = true
+interval_ms = 1000
+
+[applications]
+auto_discover = true
+
+[hyprland]
+enabled = true
