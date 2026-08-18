@@ -1,5 +1,6 @@
 /core/target/
 /.godot/
+/docs/
 *.import
 *.tmp
 *.log
