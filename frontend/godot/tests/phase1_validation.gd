@@ -119,8 +119,28 @@ func _run() -> void:
 	_check(not backend.connected, "P1.08 Phase 1 remains offline-safe")
 	_check(hud.status.text.contains("CORE OFFLINE"), "P1.08 HUD reports the safe offline result")
 
+	var keyboard_actions := [
+		"move_up",
+		"move_down",
+		"move_left",
+		"move_right",
+		"sprint",
+		"interact",
+		"menu",
+	]
+	var actions_have_keys := true
+	for action in keyboard_actions:
+		var has_key := false
+		for event in InputMap.action_get_events(action):
+			if event is InputEventKey:
+				has_key = true
+		actions_have_keys = actions_have_keys and has_key
+	_check(actions_have_keys, "P1.09 every required action has a keyboard binding")
+	_check(Input.mouse_mode != Input.MOUSE_MODE_CAPTURED, "P1.09 never captures the mouse")
+	_check(not main.menu_open and player.input_enabled and workstation.status == "attention", "P1.09 keyboard-only flow completes movement, menu, and interaction")
+
 	if failures.is_empty():
-		print("Phase 1.01-1.08 validation passed.")
+		print("Phase 1.01-1.09 validation passed.")
 		quit(0)
 	else:
 		push_error("Phase 1 validation failed: %s" % failures)

@@ -27,7 +27,7 @@ normal desktop remains available if Velora exits.
 
 ## Current status
 
-Phase 1.01–1.08 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
+Phase 1.01–1.10 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
 hub, eight-direction movement with four-direction facing, sprinting, physical
 room and object boundaries, and facing-aware application stations. A working
 pause/help overlay freezes world input and keeps controls visible in-game.
@@ -59,11 +59,22 @@ integer nearest-neighbour scaling. Install Godot 4.7 first if needed.
 ```bash
 ./scripts/check-godot.sh
 ./scripts/check.sh
+./scripts/check-performance.sh
 ```
 
 The Godot check boots the main scene headlessly and runs acceptance tests for
-the complete P1.01–P1.08 foundation, hub, controller, collisions, interaction,
-menu, reusable stations, and offline-safe backend handoff.
+the P1.01–P1.09 foundation, hub, controller, collisions, interaction, menu,
+reusable stations, offline-safe backend handoff, and keyboard-only operation.
+The performance check opens a rendered window and validates P1.10 against the
+active graphics adapter.
+
+### Integrated graphics baseline
+
+P1.10 passed on Intel UHD Graphics (Comet Lake GT2) with Mesa 26.1.7, native
+Wayland, and the Godot Compatibility renderer. Across 600 rendered frames at a
+960 × 540 window, the prototype averaged 60 FPS with a 17.05 ms p95 and 19.27
+ms maximum frame. The repeatable gate requires at least 55 FPS average and at
+most 25 ms p95.
 
 Velora remains a normal application inside the existing desktop session and
 does not modify Omarchy or Hyprland configuration.
