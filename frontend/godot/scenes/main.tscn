@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2_player"]
@@ -26,6 +26,21 @@ roughness = 0.45
 
 [sub_resource type="BoxShape3D" id="Shape_floor"]
 size = Vector3(24, 0.2, 24)
+
+[sub_resource type="BoxMesh" id="Box_wall"]
+size = Vector3(24, 5, 0.3)
+
+[sub_resource type="StandardMaterial3D" id="Material_wall"]
+albedo_color = Color(0.01, 0.055, 0.09, 1)
+metallic = 0.6
+roughness = 0.55
+
+[sub_resource type="BoxShape3D" id="Shape_wall"]
+size = Vector3(24, 5, 0.3)
+
+[sub_resource type="CapsuleShape3D" id="Shape_player"]
+radius = 0.35
+height = 1.8
 
 [sub_resource type="CylinderMesh" id="Cylinder_terminal"]
 top_radius = 0.8
@@ -80,15 +95,57 @@ material_override = SubResource("Material_floor")
 [node name="Collision" type="CollisionShape3D" parent="Floor"]
 shape = SubResource("Shape_floor")
 
+[node name="NorthWall" type="StaticBody3D" parent="." groups=["room_boundary"]]
+position = Vector3(0, 2.5, -11.85)
+
+[node name="Mesh" type="MeshInstance3D" parent="NorthWall"]
+mesh = SubResource("Box_wall")
+material_override = SubResource("Material_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="NorthWall"]
+shape = SubResource("Shape_wall")
+
+[node name="SouthWall" type="StaticBody3D" parent="." groups=["room_boundary"]]
+position = Vector3(0, 2.5, 11.85)
+
+[node name="Mesh" type="MeshInstance3D" parent="SouthWall"]
+mesh = SubResource("Box_wall")
+material_override = SubResource("Material_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="SouthWall"]
+shape = SubResource("Shape_wall")
+
+[node name="EastWall" type="StaticBody3D" parent="." groups=["room_boundary"]]
+position = Vector3(11.85, 2.5, 0)
+rotation_degrees = Vector3(0, 90, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="EastWall"]
+mesh = SubResource("Box_wall")
+material_override = SubResource("Material_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="EastWall"]
+shape = SubResource("Shape_wall")
+
+[node name="WestWall" type="StaticBody3D" parent="." groups=["room_boundary"]]
+position = Vector3(-11.85, 2.5, 0)
+rotation_degrees = Vector3(0, 90, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="WestWall"]
+mesh = SubResource("Box_wall")
+material_override = SubResource("Material_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="WestWall"]
+shape = SubResource("Shape_wall")
+
 [node name="Player" type="CharacterBody3D" parent="."]
 position = Vector3(0, 1, 7)
 script = ExtResource("2_player")
 
 [node name="Collision" type="CollisionShape3D" parent="Player"]
-shape = SubResource("Shape_terminal")
-scale = Vector3(0.28, 0.62, 0.28)
+shape = SubResource("Shape_player")
 
 [node name="Camera3D" type="Camera3D" parent="Player"]
+position = Vector3(0, 0.55, 0)
 current = true
 
 [node name="InteractRay" type="RayCast3D" parent="Player/Camera3D"]

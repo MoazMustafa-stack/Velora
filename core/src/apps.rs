@@ -16,5 +16,4 @@ pub async fn launch(desktop_id: &str) -> Result<()> {
         .with_context(|| format!("failed to launch {executable}"))?;
     info!(desktop_id, "launched application");
     Ok(())
-    
 }

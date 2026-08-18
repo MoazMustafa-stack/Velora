@@ -1,7 +1,7 @@
 extends StaticBody3D
 
 var running := false
-var backend: BackendClient
+var backend: Node
 
 func interaction_prompt() -> String:
 	return "[E] LAUNCH VISUAL STUDIO CODE" if not running else "VISUAL STUDIO CODE // RUNNING"
@@ -12,7 +12,7 @@ func interact() -> void:
 	if not backend or not backend.launch_app("code.desktop"):
 		print("Velora Core is disconnected; launch request was not sent")
 
-func set_backend(client: BackendClient) -> void:
+func set_backend(client: Node) -> void:
 	backend = client
 	backend.application_state_changed.connect(_on_application_state_changed)
 

@@ -6,6 +6,7 @@ signal interaction_changed(prompt: String)
 @export var sprint_speed: float = 7.0
 @export var mouse_sensitivity: float = 0.0025
 @export var gravity: float = 18.0
+@export_range(1.0, 8.0, 0.25) var interaction_distance: float = 4.0
 
 @onready var camera: Camera3D = $Camera3D
 @onready var interact_ray: RayCast3D = $Camera3D/InteractRay
@@ -15,11 +16,20 @@ var mouse_captured := true
 
 func _ready() -> void:
 	_register_controls()
+	interact_ray.target_position = Vector3(0, 0, -interaction_distance)
 	set_mouse_captured(true)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("release_mouse"):
 		set_mouse_captured(not mouse_captured)
+		return
+	if (
+		event is InputEventMouseButton
+		and event.button_index == MOUSE_BUTTON_LEFT
+		and event.pressed
+		and not mouse_captured
+	):
+		set_mouse_captured(true)
 		return
 	if event is InputEventMouseMotion and mouse_captured:
 		rotate_y(-event.relative.x * mouse_sensitivity)
@@ -33,7 +43,11 @@ func _physics_process(delta: float) -> void:
 		velocity.y -= gravity * delta
 	else:
 		velocity.y = -0.1
-	var movement := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var movement := (
+		Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+		if mouse_captured
+		else Vector2.ZERO
+	)
 	var direction := (transform.basis * Vector3(movement.x, 0, movement.y)).normalized()
 	var speed := sprint_speed if Input.is_action_pressed("sprint") else walk_speed
 	velocity.x = direction.x * speed
@@ -49,7 +63,11 @@ func _update_interaction() -> void:
 	var target: Node = interact_ray.get_collider() if interact_ray.is_colliding() else null
 	if target == active_interactable:
 		return
-	active_interactable = target if target and target.has_method("interact") else null
+	active_interactable = (
+		target
+		if target and target.has_method("interact") and target.has_method("interaction_prompt")
+		else null
+	)
 	interaction_changed.emit(active_interactable.interaction_prompt() if active_interactable else "")
 
 func _register_controls() -> void:

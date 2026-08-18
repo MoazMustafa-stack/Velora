@@ -1,6 +1,43 @@
-/core/target/
-/.godot/
-/docs/
+# Rust build output and profiling data
+**/target/
+*.profraw
+
+# Godot import database and generated editor state
+**/.godot/
+**/.import/
 *.import
+
+# Local planning notes are managed outside the public repository
+/docs/
+
+# Godot exports and generated native builds
+/frontend/godot/builds/
+/frontend/godot/export/
+/frontend/godot/bin/
+/frontend/godot/.mono/
+/frontend/godot/android/build/
+
+# Compiled native artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.pdb
+
+# Coverage, logs, and temporary files
+/coverage/
 *.tmp
 *.log
+*.bak
+
+# Local editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db

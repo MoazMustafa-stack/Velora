@@ -3,7 +3,7 @@ extends Node3D
 @onready var player: CharacterBody3D = $Player
 @onready var hud: CanvasLayer = $HUD
 @onready var terminal: StaticBody3D = $VSCodeTerminal
-@onready var backend: BackendClient = $BackendClient
+@onready var backend: Node = $BackendClient
 
 func _ready() -> void:
 	hud.set_player(player)
