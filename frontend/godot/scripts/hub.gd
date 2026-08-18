@@ -29,5 +29,7 @@ func _ready() -> void:
 	for y in range(4, ROOM_HEIGHT - 1):
 		details.set_cell(Vector2i(9, y), source_id, Vector2i(2, 0))
 		details.set_cell(Vector2i(10, y), source_id, Vector2i(2, 0))
+	for x in range(5, 15):
+		details.set_cell(Vector2i(x, 4), source_id, Vector2i(2, 0))
 	details.set_cell(Vector2i(9, ROOM_HEIGHT - 2), source_id, Vector2i(3, 0))
 	details.set_cell(Vector2i(10, ROOM_HEIGHT - 2), source_id, Vector2i(3, 0))

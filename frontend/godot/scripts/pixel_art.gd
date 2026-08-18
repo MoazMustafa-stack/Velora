@@ -80,7 +80,11 @@ static func create_player_texture(facing: Vector2, step: int) -> ImageTexture:
 
 	return ImageTexture.create_from_image(image)
 
-static func create_workstation_texture(state: String = "offline") -> ImageTexture:
+static func create_workstation_texture(
+	state: String = "offline",
+	accent: Color = CYAN,
+	station_kind: String = "code"
+) -> ImageTexture:
 	var image := Image.create_empty(32, 32, false, Image.FORMAT_RGBA8)
 	image.fill(Color.TRANSPARENT)
 	image.fill_rect(Rect2i(2, 28, 28, 3), Color(0, 0, 0, 0.4))
@@ -89,13 +93,29 @@ static func create_workstation_texture(state: String = "offline") -> ImageTextur
 	image.fill_rect(Rect2i(8, 3, 16, 15), SHADOW)
 	image.fill_rect(Rect2i(9, 4, 14, 13), STEEL_LIGHT)
 	image.fill_rect(Rect2i(11, 6, 10, 8), Color("0d3140"))
-	image.fill_rect(Rect2i(12, 7, 8, 6), CYAN if state == "offline" else CYAN_LIGHT)
+	image.fill_rect(Rect2i(12, 7, 8, 6), accent.darkened(0.55))
+	_draw_station_glyph(image, station_kind, accent)
 	image.fill_rect(Rect2i(14, 18, 4, 3), STEEL_LIGHT)
 	image.fill_rect(Rect2i(10, 22, 12, 2), Color("50698e"))
-	image.fill_rect(Rect2i(24, 21, 2, 2), AMBER if state == "offline" else CYAN)
+	image.fill_rect(Rect2i(24, 21, 2, 2), AMBER if state == "offline" else accent)
 	if state == "attention":
 		image.fill_rect(Rect2i(12, 8, 8, 4), AMBER)
 	return ImageTexture.create_from_image(image)
+
+static func _draw_station_glyph(image: Image, station_kind: String, accent: Color) -> void:
+	if station_kind == "browser":
+		image.fill_rect(Rect2i(14, 8, 4, 4), accent)
+		image.set_pixel(15, 9, SHADOW)
+		image.set_pixel(16, 10, SHADOW)
+	elif station_kind == "terminal":
+		image.fill_rect(Rect2i(13, 8, 2, 1), accent)
+		image.fill_rect(Rect2i(14, 9, 2, 1), accent)
+		image.fill_rect(Rect2i(13, 10, 2, 1), accent)
+		image.fill_rect(Rect2i(17, 11, 2, 1), accent)
+	else:
+		image.fill_rect(Rect2i(13, 8, 2, 4), accent)
+		image.fill_rect(Rect2i(18, 8, 2, 4), accent)
+		image.fill_rect(Rect2i(15, 9, 3, 2), accent)
 
 static func _draw_floor_tile(image: Image, origin: Vector2i, accented: bool) -> void:
 	image.fill_rect(Rect2i(origin, TILE_SIZE), FLOOR_BLUE)
