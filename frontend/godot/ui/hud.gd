@@ -1,13 +1,21 @@
 extends CanvasLayer
 
-@onready var status: Label = $Panel/Margin/Status
+@onready var status: Label = $StatusPanel/Margin/Status
+@onready var prompt_panel: PanelContainer = $PromptPanel
+@onready var prompt: Label = $PromptPanel/Margin/Prompt
 
-func set_player(player: CharacterBody3D) -> void:
-	player.interaction_changed.connect(_on_interaction_changed)
-	status.text = "VELORA // CORE: START ./scripts/run-core.sh"
+func _ready() -> void:
+	prompt_panel.visible = false
 
-func _on_interaction_changed(prompt: String) -> void:
-	status.text = prompt if not prompt.is_empty() else "VELORA // WASD MOVE · E INTERACT · ESC RELEASE MOUSE"
+func set_interaction_prompt(message: String) -> void:
+	prompt.text = message
+	prompt_panel.visible = not message.is_empty()
+
+func set_status(message: String) -> void:
+	status.text = message
 
 func set_backend_status(message: String) -> void:
 	status.text = "VELORA // " + message
+
+func show_menu_hint() -> void:
+	status.text = "VELORA // ESC MENU ARRIVES IN P1.06"

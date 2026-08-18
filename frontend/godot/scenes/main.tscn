@@ -1,190 +1,135 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-[ext_resource type="Script" path="res://scripts/player.gd" id="2_player"]
-[ext_resource type="Script" path="res://scripts/interactable_terminal.gd" id="3_terminal"]
-[ext_resource type="Script" path="res://ui/hud.gd" id="4_hud"]
-[ext_resource type="Script" path="res://scripts/backend_client.gd" id="5_backend"]
+[ext_resource type="Script" path="res://scripts/backend_client.gd" id="2_backend"]
+[ext_resource type="Script" path="res://scripts/hub.gd" id="3_hub"]
+[ext_resource type="Script" path="res://scripts/workstation.gd" id="4_workstation"]
+[ext_resource type="Script" path="res://scripts/player.gd" id="5_player"]
+[ext_resource type="Script" path="res://ui/hud.gd" id="6_hud"]
 
-[sub_resource type="Environment" id="Environment_main"]
-background_mode = 1
-background_color = Color(0.004, 0.01, 0.025, 1)
-ambient_light_source = 3
-ambient_light_color = Color(0.05, 0.16, 0.25, 1)
-ambient_light_energy = 0.75
-tonemap_mode = 2
-glow_enabled = true
-glow_intensity = 1.1
+[sub_resource type="RectangleShape2D" id="Shape_player"]
+size = Vector2(10, 8)
 
-[sub_resource type="BoxMesh" id="Box_floor"]
-size = Vector3(24, 0.2, 24)
+[sub_resource type="RectangleShape2D" id="Shape_detector"]
+size = Vector2(14, 12)
 
-[sub_resource type="StandardMaterial3D" id="Material_floor"]
-albedo_color = Color(0.015, 0.04, 0.07, 1)
-metallic = 0.7
-roughness = 0.45
+[sub_resource type="RectangleShape2D" id="Shape_workstation"]
+size = Vector2(32, 18)
 
-[sub_resource type="BoxShape3D" id="Shape_floor"]
-size = Vector3(24, 0.2, 24)
+[sub_resource type="RectangleShape2D" id="Shape_interaction"]
+size = Vector2(42, 32)
 
-[sub_resource type="BoxMesh" id="Box_wall"]
-size = Vector3(24, 5, 0.3)
-
-[sub_resource type="StandardMaterial3D" id="Material_wall"]
-albedo_color = Color(0.01, 0.055, 0.09, 1)
-metallic = 0.6
-roughness = 0.55
-
-[sub_resource type="BoxShape3D" id="Shape_wall"]
-size = Vector3(24, 5, 0.3)
-
-[sub_resource type="CapsuleShape3D" id="Shape_player"]
-radius = 0.35
-height = 1.8
-
-[sub_resource type="CylinderMesh" id="Cylinder_terminal"]
-top_radius = 0.8
-bottom_radius = 1.0
-height = 2.8
-radial_segments = 16
-
-[sub_resource type="StandardMaterial3D" id="Material_terminal"]
-albedo_color = Color(0.01, 0.16, 0.2, 1)
-metallic = 0.8
-roughness = 0.25
-emission_enabled = true
-emission = Color(0, 0.85, 1, 1)
-emission_energy_multiplier = 2.0
-
-[sub_resource type="CylinderShape3D" id="Shape_terminal"]
-radius = 1.0
-height = 2.8
-
-[sub_resource type="StyleBoxFlat" id="Style_hud"]
-bg_color = Color(0.0, 0.08, 0.14, 0.85)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.0, 0.8, 1.0, 0.8)
-corner_radius_top_left = 5
-corner_radius_top_right = 5
-corner_radius_bottom_right = 5
-corner_radius_bottom_left = 5
-
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node2D"]
 script = ExtResource("1_main")
 
 [node name="BackendClient" type="Node" parent="."]
-script = ExtResource("5_backend")
+script = ExtResource("2_backend")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_main")
+[node name="World" type="Node2D" parent="."]
+script = ExtResource("3_hub")
 
-[node name="KeyLight" type="DirectionalLight3D" parent="."]
-rotation_degrees = Vector3(-48, -28, 0)
-light_color = Color(0.4, 0.8, 1, 1)
-light_energy = 1.5
+[node name="Ground" type="TileMapLayer" parent="World"]
 
-[node name="Floor" type="StaticBody3D" parent="."]
+[node name="Walls" type="TileMapLayer" parent="World"]
+z_index = 1
+collision_visibility_mode = 1
 
-[node name="Mesh" type="MeshInstance3D" parent="Floor"]
-mesh = SubResource("Box_floor")
-material_override = SubResource("Material_floor")
+[node name="Details" type="TileMapLayer" parent="World"]
+z_index = 2
 
-[node name="Collision" type="CollisionShape3D" parent="Floor"]
-shape = SubResource("Shape_floor")
+[node name="Objects" type="Node2D" parent="World"]
+z_index = 3
 
-[node name="NorthWall" type="StaticBody3D" parent="." groups=["room_boundary"]]
-position = Vector3(0, 2.5, -11.85)
+[node name="Workstation" type="StaticBody2D" parent="World/Objects"]
+position = Vector2(160, 48)
+collision_layer = 1
+collision_mask = 0
+script = ExtResource("4_workstation")
 
-[node name="Mesh" type="MeshInstance3D" parent="NorthWall"]
-mesh = SubResource("Box_wall")
-material_override = SubResource("Material_wall")
+[node name="Sprite2D" type="Sprite2D" parent="World/Objects/Workstation"]
+position = Vector2(0, -5)
 
-[node name="Collision" type="CollisionShape3D" parent="NorthWall"]
-shape = SubResource("Shape_wall")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Objects/Workstation"]
+position = Vector2(0, 5)
+shape = SubResource("Shape_workstation")
 
-[node name="SouthWall" type="StaticBody3D" parent="." groups=["room_boundary"]]
-position = Vector3(0, 2.5, 11.85)
+[node name="InteractionArea" type="Area2D" parent="World/Objects/Workstation"]
+collision_layer = 4
+collision_mask = 0
 
-[node name="Mesh" type="MeshInstance3D" parent="SouthWall"]
-mesh = SubResource("Box_wall")
-material_override = SubResource("Material_wall")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Objects/Workstation/InteractionArea"]
+shape = SubResource("Shape_interaction")
 
-[node name="Collision" type="CollisionShape3D" parent="SouthWall"]
-shape = SubResource("Shape_wall")
+[node name="Player" type="CharacterBody2D" parent="World"]
+z_index = 4
+position = Vector2(160, 136)
+collision_layer = 1
+collision_mask = 1
+script = ExtResource("5_player")
 
-[node name="EastWall" type="StaticBody3D" parent="." groups=["room_boundary"]]
-position = Vector3(11.85, 2.5, 0)
-rotation_degrees = Vector3(0, 90, 0)
+[node name="Sprite2D" type="Sprite2D" parent="World/Player"]
+position = Vector2(0, -8)
 
-[node name="Mesh" type="MeshInstance3D" parent="EastWall"]
-mesh = SubResource("Box_wall")
-material_override = SubResource("Material_wall")
-
-[node name="Collision" type="CollisionShape3D" parent="EastWall"]
-shape = SubResource("Shape_wall")
-
-[node name="WestWall" type="StaticBody3D" parent="." groups=["room_boundary"]]
-position = Vector3(-11.85, 2.5, 0)
-rotation_degrees = Vector3(0, 90, 0)
-
-[node name="Mesh" type="MeshInstance3D" parent="WestWall"]
-mesh = SubResource("Box_wall")
-material_override = SubResource("Material_wall")
-
-[node name="Collision" type="CollisionShape3D" parent="WestWall"]
-shape = SubResource("Shape_wall")
-
-[node name="Player" type="CharacterBody3D" parent="."]
-position = Vector3(0, 1, 7)
-script = ExtResource("2_player")
-
-[node name="Collision" type="CollisionShape3D" parent="Player"]
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Player"]
 shape = SubResource("Shape_player")
 
-[node name="Camera3D" type="Camera3D" parent="Player"]
-position = Vector3(0, 0.55, 0)
-current = true
+[node name="InteractionDetector" type="Area2D" parent="World/Player"]
+collision_layer = 0
+collision_mask = 4
 
-[node name="InteractRay" type="RayCast3D" parent="Player/Camera3D"]
-enabled = true
-target_position = Vector3(0, 0, -4)
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Player/InteractionDetector"]
+shape = SubResource("Shape_detector")
 
-[node name="VSCodeTerminal" type="StaticBody3D" parent="."]
-position = Vector3(0, 1.4, -2)
-script = ExtResource("3_terminal")
-
-[node name="Mesh" type="MeshInstance3D" parent="VSCodeTerminal"]
-mesh = SubResource("Cylinder_terminal")
-material_override = SubResource("Material_terminal")
-
-[node name="Collision" type="CollisionShape3D" parent="VSCodeTerminal"]
-shape = SubResource("Shape_terminal")
-
-[node name="OmniLight3D" type="OmniLight3D" parent="VSCodeTerminal"]
-light_color = Color(0, 0.85, 1, 1)
-light_energy = 3.0
-omni_range = 7.0
+[node name="Camera2D" type="Camera2D" parent="World/Player"]
+limit_left = 0
+limit_top = 0
+limit_right = 320
+limit_bottom = 192
+position_smoothing_enabled = false
 
 [node name="HUD" type="CanvasLayer" parent="."]
-script = ExtResource("4_hud")
+script = ExtResource("6_hud")
 
-[node name="Panel" type="PanelContainer" parent="HUD"]
-offset_left = 28.0
-offset_top = 28.0
-offset_right = 480.0
-offset_bottom = 118.0
-theme_override_styles/panel = SubResource("Style_hud")
+[node name="StatusPanel" type="PanelContainer" parent="HUD"]
+offset_left = 6.0
+offset_top = 6.0
+offset_right = 192.0
+offset_bottom = 29.0
 
-[node name="Margin" type="MarginContainer" parent="HUD/Panel"]
-theme_override_constants/margin_left = 14
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 14
-theme_override_constants/margin_bottom = 10
+[node name="Margin" type="MarginContainer" parent="HUD/StatusPanel"]
+theme_override_constants/margin_left = 5
+theme_override_constants/margin_top = 3
+theme_override_constants/margin_right = 5
+theme_override_constants/margin_bottom = 3
 
-[node name="Status" type="Label" parent="HUD/Panel/Margin"]
-theme_override_colors/font_color = Color(0.65, 0.94, 1, 1)
-theme_override_font_sizes/font_size = 17
-text = "VELORA // CONNECTING"
+[node name="Status" type="Label" parent="HUD/StatusPanel/Margin"]
+theme_override_colors/font_color = Color(0.603922, 0.956863, 0.905882, 1)
+theme_override_font_sizes/font_size = 8
+text = "VELORA // POCKET TERMINAL"
+
+[node name="PromptPanel" type="PanelContainer" parent="HUD"]
+offset_left = 82.0
+offset_top = 145.0
+offset_right = 238.0
+offset_bottom = 172.0
+
+[node name="Margin" type="MarginContainer" parent="HUD/PromptPanel"]
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 5
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 5
+
+[node name="Prompt" type="Label" parent="HUD/PromptPanel/Margin"]
+theme_override_colors/font_color = Color(0.862745, 0.901961, 0.94902, 1)
+theme_override_font_sizes/font_size = 9
+text = "[E] USE  VS CODE"
+horizontal_alignment = 1
+
+[node name="Help" type="Label" parent="HUD"]
+offset_left = 7.0
+offset_top = 163.0
+offset_right = 124.0
+offset_bottom = 177.0
+theme_override_colors/font_color = Color(0.584314, 0.65098, 0.760784, 1)
+theme_override_font_sizes/font_size = 7
+text = "WASD MOVE  SHIFT RUN  E USE"

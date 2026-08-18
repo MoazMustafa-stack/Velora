@@ -1,88 +1,120 @@
-extends CharacterBody3D
+extends CharacterBody2D
+
+const PixelArt = preload("res://scripts/pixel_art.gd")
 
 signal interaction_changed(prompt: String)
+signal interaction_requested(target: Node)
+signal menu_requested
 
-@export var walk_speed: float = 4.0
-@export var sprint_speed: float = 7.0
-@export var mouse_sensitivity: float = 0.0025
-@export var gravity: float = 18.0
-@export_range(1.0, 8.0, 0.25) var interaction_distance: float = 4.0
+@export var walk_speed := 48.0
+@export var sprint_speed := 72.0
+@export var animation_interval := 0.14
 
-@onready var camera: Camera3D = $Camera3D
-@onready var interact_ray: RayCast3D = $Camera3D/InteractRay
+@onready var sprite: Sprite2D = $Sprite2D
+@onready var interaction_detector: Area2D = $InteractionDetector
 
+var facing := Vector2.DOWN
 var active_interactable: Node = null
-var mouse_captured := true
+var _animation_time := 0.0
+var _animation_step := 0
+var _last_prompt := ""
+var _texture_cache: Dictionary = {}
 
 func _ready() -> void:
 	_register_controls()
-	interact_ray.target_position = Vector3(0, 0, -interaction_distance)
-	set_mouse_captured(true)
+	_update_detector_position()
+	_update_sprite()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("release_mouse"):
-		set_mouse_captured(not mouse_captured)
-		return
-	if (
-		event is InputEventMouseButton
-		and event.button_index == MOUSE_BUTTON_LEFT
-		and event.pressed
-		and not mouse_captured
-	):
-		set_mouse_captured(true)
-		return
-	if event is InputEventMouseMotion and mouse_captured:
-		rotate_y(-event.relative.x * mouse_sensitivity)
-		camera.rotate_x(-event.relative.y * mouse_sensitivity)
-		camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-80), deg_to_rad(80))
-	if event.is_action_pressed("interact") and mouse_captured and active_interactable:
-		active_interactable.interact()
+	if event.is_action_pressed("interact") and active_interactable:
+		interaction_requested.emit(active_interactable)
+	elif event.is_action_pressed("menu"):
+		menu_requested.emit()
 
 func _physics_process(delta: float) -> void:
-	if not is_on_floor():
-		velocity.y -= gravity * delta
-	else:
-		velocity.y = -0.1
-	var movement := (
-		Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-		if mouse_captured
-		else Vector2.ZERO
-	)
-	var direction := (transform.basis * Vector3(movement.x, 0, movement.y)).normalized()
+	var movement := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	if movement != Vector2.ZERO:
+		_set_facing_from_movement(movement)
 	var speed := sprint_speed if Input.is_action_pressed("sprint") else walk_speed
-	velocity.x = direction.x * speed
-	velocity.z = direction.z * speed
+	velocity = movement.normalized() * speed
 	move_and_slide()
+	_update_animation(delta, movement != Vector2.ZERO)
 	_update_interaction()
 
-func set_mouse_captured(captured: bool) -> void:
-	mouse_captured = captured
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if captured else Input.MOUSE_MODE_VISIBLE
+func _set_facing_from_movement(movement: Vector2) -> void:
+	if absf(movement.x) > absf(movement.y):
+		facing = Vector2.RIGHT if movement.x > 0 else Vector2.LEFT
+	else:
+		facing = Vector2.DOWN if movement.y > 0 else Vector2.UP
+	_update_detector_position()
+
+func _update_detector_position() -> void:
+	var offsets := {
+		Vector2.UP: Vector2(0, -14),
+		Vector2.DOWN: Vector2(0, 14),
+		Vector2.LEFT: Vector2(-12, 4),
+		Vector2.RIGHT: Vector2(12, 4),
+	}
+	interaction_detector.position = offsets.get(facing, Vector2(0, 14))
+
+func _update_animation(delta: float, moving: bool) -> void:
+	if moving:
+		_animation_time += delta
+		if _animation_time >= animation_interval:
+			_animation_time = 0.0
+			_animation_step = 1 - _animation_step
+	else:
+		_animation_time = 0.0
+		_animation_step = 0
+	_update_sprite()
+
+func _update_sprite() -> void:
+	var key := "%s:%d" % [_facing_name(), _animation_step]
+	if not _texture_cache.has(key):
+		_texture_cache[key] = PixelArt.create_player_texture(facing, _animation_step)
+	sprite.texture = _texture_cache[key]
+
+func _facing_name() -> String:
+	if facing == Vector2.UP:
+		return "up"
+	if facing == Vector2.LEFT:
+		return "left"
+	if facing == Vector2.RIGHT:
+		return "right"
+	return "down"
 
 func _update_interaction() -> void:
-	var target: Node = interact_ray.get_collider() if interact_ray.is_colliding() else null
-	if target == active_interactable:
-		return
-	active_interactable = (
-		target
-		if target and target.has_method("interact") and target.has_method("interaction_prompt")
-		else null
-	)
-	interaction_changed.emit(active_interactable.interaction_prompt() if active_interactable else "")
+	var closest: Node = null
+	var closest_distance := INF
+	for area in interaction_detector.get_overlapping_areas():
+		var candidate := area.get_parent()
+		if not candidate.has_method("interact") or not candidate.has_method("interaction_prompt"):
+			continue
+		var distance := global_position.distance_squared_to(candidate.global_position)
+		if distance < closest_distance:
+			closest = candidate
+			closest_distance = distance
+	active_interactable = closest
+	var prompt: String = active_interactable.interaction_prompt() if active_interactable else ""
+	if prompt != _last_prompt:
+		_last_prompt = prompt
+		interaction_changed.emit(prompt)
 
 func _register_controls() -> void:
-	_register_key("move_forward", KEY_W)
-	_register_key("move_back", KEY_S)
-	_register_key("move_left", KEY_A)
-	_register_key("move_right", KEY_D)
-	_register_key("sprint", KEY_SHIFT)
-	_register_key("interact", KEY_E)
-	_register_key("release_mouse", KEY_ESCAPE)
+	_ensure_action("move_up", [KEY_W, KEY_UP])
+	_ensure_action("move_down", [KEY_S, KEY_DOWN])
+	_ensure_action("move_left", [KEY_A, KEY_LEFT])
+	_ensure_action("move_right", [KEY_D, KEY_RIGHT])
+	_ensure_action("sprint", [KEY_SHIFT])
+	_ensure_action("interact", [KEY_E, KEY_ENTER])
+	_ensure_action("menu", [KEY_ESCAPE])
 
-func _register_key(action: StringName, keycode: Key) -> void:
-	if InputMap.has_action(action):
+func _ensure_action(action: StringName, keys: Array[int]) -> void:
+	if not InputMap.has_action(action):
+		InputMap.add_action(action)
+	if not InputMap.action_get_events(action).is_empty():
 		return
-	InputMap.add_action(action)
-	var event := InputEventKey.new()
-	event.physical_keycode = keycode
-	InputMap.action_add_event(action, event)
+	for keycode in keys:
+		var event := InputEventKey.new()
+		event.physical_keycode = keycode
+		InputMap.action_add_event(action, event)

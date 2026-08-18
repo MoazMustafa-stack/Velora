@@ -1,11 +1,11 @@
 class_name BackendClient
 extends Node
 
-## Phase 1 frontend boundary.
+## Offline-safe frontend boundary for the future native core transport.
 ##
-## Godot 4.7 does not expose Unix-domain sockets to GDScript. Phase 1 keeps
-## this typed, signal-based boundary offline-safe; Phase 2 will provide the
-## native Unix-socket transport without leaking Linux commands into the UI.
+## Godot does not expose Unix-domain sockets directly to GDScript. Phase 1
+## therefore keeps the Linux integration behind signals and semantic methods;
+## Phase 2 can replace the transport without coupling UI nodes to shell calls.
 
 signal connection_changed(message: String)
 signal application_state_changed(desktop_id: String, running: bool)
@@ -21,9 +21,9 @@ func connect_to_core() -> void:
 
 func launch_app(_desktop_id: String) -> bool:
 	if not connected:
-		connection_changed.emit("CORE: OFFLINE — PHASE 2 IPC NOT CONNECTED")
+		connection_changed.emit("CORE: OFFLINE // PHASE 2 IPC")
 		return false
 	return false
 
 func _announce_offline() -> void:
-	connection_changed.emit("CORE: OFFLINE — SPATIAL PROTOTYPE MODE")
+	connection_changed.emit("CORE: OFFLINE // PIXEL HUB MODE")
