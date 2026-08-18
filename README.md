@@ -5,17 +5,19 @@
 > visual direction, and Linux integrations are expected to change.
 
 [![Status: work in progress](https://img.shields.io/badge/status-work_in_progress-f59e0b)](#project-status)
+[![Phase: pixel hub](https://img.shields.io/badge/phase-pixel_hub-41d6c3)](#current-status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
-Velora is an experimental spatial 3D desktop interface for Linux. It runs
-*inside* an existing Omarchy + Hyprland session, making applications, projects,
-and system state feel tangible without replacing the desktop underneath.
+Velora is an experimental pixel-art desktop interface for Linux. It runs
+*inside* an existing Omarchy + Hyprland session and represents applications,
+projects, and system state as a small top-down world without replacing the
+desktop underneath.
 
 ## Why Velora?
 
 Velora explores a desktop where spaces are navigable, applications are
 interactive objects, and system state is visual—while conventional shortcuts,
-launchers, and window management remain the fastest path when they matter.
+launchers, and window management remain available when they are faster.
 
 ## Project status
 
@@ -25,30 +27,40 @@ normal desktop remains available if Velora exits.
 
 ## Current status
 
-The v0.1 bootstrap provides a Godot 4 spatial-room prototype and a separate
-Rust core daemon. The frontend has first-person movement, mouse look, a
-raycast interaction prompt, and a VS Code terminal. The core exposes a
-newline-delimited JSON protocol over a Unix socket with `ping` / `pong` and a
-safe, semantic `launch_app` request.
+Phase 1.01–1.05 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
+hub, eight-direction movement with four-direction facing, sprinting, physical
+room and object boundaries, and a facing-aware workstation interaction.
 
-Godot was not installed during the initial audit, so graphical validation is
-pending. No Omarchy configuration was changed.
+The visuals are generated from an original restrained palette at runtime, so
+the prototype stays tiny and does not ship copied game artwork. A separate Rust
+core remains in the repository; Godot deliberately reports it as offline until
+the native Unix-socket transport is implemented in Phase 2.
 
 ## Run
 
-In separate terminals:
-
 ```bash
-./scripts/run-core.sh
 ./scripts/run-velora.sh
 ```
 
-Install Godot 4 first if needed: `omarchy pkg add godot`.
+The default window is 960 × 540, rendered from a 320 × 180 internal canvas with
+integer nearest-neighbour scaling. Install Godot 4.7 first if needed.
 
 ## Controls
 
-`WASD` move, mouse look, `Shift` sprint, `E` interact, `Escape` releases or
-recaptures the mouse.
+- `WASD` or arrow keys: move
+- `Shift`: sprint
+- `E` or `Enter`: interact
+- `Escape`: menu hint (full menu is planned)
+
+## Validate
+
+```bash
+./scripts/check-godot.sh
+./scripts/check.sh
+```
+
+The Godot check boots the main scene headlessly and runs acceptance tests for
+the P1.01–P1.05 foundation, hub, controller, collisions, and interaction.
 
 See [development documentation](docs/development.md) for checks and the
 [Omarchy integration notes](docs/omarchy-integration.md) for safety boundaries.
