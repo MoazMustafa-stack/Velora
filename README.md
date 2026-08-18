@@ -41,11 +41,21 @@ native Unix-socket transport in Phase 2.
 ## Run
 
 ```bash
-./scripts/run-velora.sh
+./scripts/velora.sh run
 ```
 
 The default window is 960 × 540, rendered from a 320 × 180 internal canvas with
 integer nearest-neighbour scaling. Install Godot 4.7 first if needed.
+
+The unified development runner also exposes the common workflows:
+
+```bash
+./scripts/velora.sh edit   # open the Godot editor
+./scripts/velora.sh check  # Godot acceptance tests + Rust checks
+./scripts/velora.sh perf   # rendered integrated-GPU benchmark
+./scripts/velora.sh all    # all automated and rendered checks
+./scripts/velora.sh core   # run the Rust core daemon
+```
 
 ## Controls
 
