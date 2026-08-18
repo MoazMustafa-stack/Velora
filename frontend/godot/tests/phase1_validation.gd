@@ -42,6 +42,8 @@ func _run() -> void:
 	var player := main.get_node("World/Player") as CharacterBody2D
 	var workstation := main.get_node("World/Objects/Workstation") as StaticBody2D
 	var detector := player.get_node("InteractionDetector") as Area2D
+	var backend := main.get_node("BackendClient")
+	var hud := main.get_node("HUD")
 
 	_check(ground != null and not ground.get_used_cells().is_empty(), "P1.02 builds the hub ground with TileMapLayer")
 	_check(walls != null and walls.get_used_cells().size() == 60, "P1.02 builds a closed 20 x 12 room boundary")
@@ -92,8 +94,53 @@ func _run() -> void:
 	await process_frame
 	_check(workstation.status == "attention", "P1.05 E/Enter interaction reaches the target")
 
+	player.position = Vector2(80, 130)
+	player._unhandled_input(_action_event("menu"))
+	await process_frame
+	_check(main.menu_open, "P1.06 Escape opens the pause/help menu")
+	_check(hud.get_node("MenuOverlay").visible, "P1.06 menu presents controls and safety state")
+	_check(not player.input_enabled, "P1.06 menu locks player input")
+	var paused_position := player.position
+	await _hold("move_right", 8)
+	_check(player.position.is_equal_approx(paused_position), "P1.06 player cannot move behind the menu")
+	player._unhandled_input(_action_event("menu"))
+	await process_frame
+	_check(not main.menu_open and player.input_enabled, "P1.06 Escape resumes the hub")
+
+	var stations := get_nodes_in_group("application_stations")
+	var station_ids: Array[String] = []
+	for station in stations:
+		station_ids.append(station.desktop_id)
+	_check(stations.size() == 3, "P1.07 hub exposes three reusable application stations")
+	_check(station_ids.has("code.desktop") and station_ids.has("firefox.desktop") and station_ids.has("kitty.desktop"), "P1.07 stations carry semantic desktop IDs")
+	_check(main.get_node("World/Objects/BrowserStation").interaction_prompt() == "[E] USE  FIREFOX", "P1.07 station prompts are configured per application")
+
+	_check(backend.last_requested_desktop_id == "code.desktop", "P1.08 interaction reaches the typed backend boundary")
+	_check(not backend.connected, "P1.08 Phase 1 remains offline-safe")
+	_check(hud.status.text.contains("CORE OFFLINE"), "P1.08 HUD reports the safe offline result")
+
+	var keyboard_actions := [
+		"move_up",
+		"move_down",
+		"move_left",
+		"move_right",
+		"sprint",
+		"interact",
+		"menu",
+	]
+	var actions_have_keys := true
+	for action in keyboard_actions:
+		var has_key := false
+		for event in InputMap.action_get_events(action):
+			if event is InputEventKey:
+				has_key = true
+		actions_have_keys = actions_have_keys and has_key
+	_check(actions_have_keys, "P1.09 every required action has a keyboard binding")
+	_check(Input.mouse_mode != Input.MOUSE_MODE_CAPTURED, "P1.09 never captures the mouse")
+	_check(not main.menu_open and player.input_enabled and workstation.status == "attention", "P1.09 keyboard-only flow completes movement, menu, and interaction")
+
 	if failures.is_empty():
-		print("Phase 1.01-1.05 validation passed.")
+		print("Phase 1.01-1.09 validation passed.")
 		quit(0)
 	else:
 		push_error("Phase 1 validation failed: %s" % failures)

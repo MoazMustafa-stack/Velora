@@ -11,6 +11,7 @@ signal connection_changed(message: String)
 signal application_state_changed(desktop_id: String, running: bool)
 
 var connected := false
+var last_requested_desktop_id := ""
 
 func _ready() -> void:
 	call_deferred("_announce_offline")
@@ -19,7 +20,8 @@ func connect_to_core() -> void:
 	connected = false
 	_announce_offline()
 
-func launch_app(_desktop_id: String) -> bool:
+func launch_app(desktop_id: String) -> bool:
+	last_requested_desktop_id = desktop_id
 	if not connected:
 		connection_changed.emit("CORE: OFFLINE // PHASE 2 IPC")
 		return false

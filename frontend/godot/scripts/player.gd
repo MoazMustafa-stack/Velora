@@ -15,6 +15,7 @@ signal menu_requested
 
 var facing := Vector2.DOWN
 var active_interactable: Node = null
+var input_enabled := true
 var _animation_time := 0.0
 var _animation_step := 0
 var _last_prompt := ""
@@ -26,12 +27,16 @@ func _ready() -> void:
 	_update_sprite()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("interact") and active_interactable:
-		interaction_requested.emit(active_interactable)
-	elif event.is_action_pressed("menu"):
+	if event.is_action_pressed("menu"):
 		menu_requested.emit()
+	elif input_enabled and event.is_action_pressed("interact") and active_interactable:
+		interaction_requested.emit(active_interactable)
 
 func _physics_process(delta: float) -> void:
+	if not input_enabled:
+		velocity = Vector2.ZERO
+		_update_animation(delta, false)
+		return
 	var movement := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if movement != Vector2.ZERO:
 		_set_facing_from_movement(movement)
@@ -40,6 +45,14 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	_update_animation(delta, movement != Vector2.ZERO)
 	_update_interaction()
+
+func set_input_enabled(enabled: bool) -> void:
+	input_enabled = enabled
+	if not enabled:
+		velocity = Vector2.ZERO
+		active_interactable = null
+		_last_prompt = ""
+		interaction_changed.emit("")
 
 func _set_facing_from_movement(movement: Vector2) -> void:
 	if absf(movement.x) > absf(movement.y):
