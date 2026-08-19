@@ -3,6 +3,7 @@ use std::{
     collections::HashSet,
     env,
     ffi::{OsStr, OsString},
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -14,6 +15,89 @@ pub fn application_directories() -> Result<Vec<PathBuf>> {
         env::var_os("XDG_DATA_HOME").as_deref(),
         env::var_os("XDG_DATA_DIRS").as_deref(),
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopFile {
+    pub id: String,
+    pub path: PathBuf,
+}
+
+pub fn discover_desktop_files(directories: &[PathBuf]) -> Result<Vec<DesktopFile>> {
+    let mut desktop_files = Vec::new();
+    let mut seen_ids = HashSet::new();
+
+    for directory in directories {
+        collect_desktop_files(directory, directory, &mut seen_ids, &mut desktop_files)?;
+    }
+
+    Ok(desktop_files)
+}
+
+fn collect_desktop_files(
+    root: &Path,
+    current: &Path,
+    seen_ids: &mut HashSet<String>,
+    desktop_files: &mut Vec<DesktopFile>,
+) -> Result<()> {
+    let entries = match fs::read_dir(current) {
+        Ok(entries) => entries,
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("cannot read application directory {}", current.display())
+            });
+        }
+    };
+
+    let mut entries = entries
+        .collect::<io::Result<Vec<_>>>()
+        .with_context(|| format!("cannot inspect application directory {}", current.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("cannot inspect {}", path.display()))?;
+
+        if file_type.is_dir() {
+            collect_desktop_files(root, &path, seen_ids, desktop_files)?;
+            continue;
+        }
+
+        if (!file_type.is_file() && !file_type.is_symlink())
+            || path.extension() != Some(OsStr::new("desktop"))
+        {
+            continue;
+        }
+
+        let Some(id) = desktop_file_id(root, &path) else {
+            continue;
+        };
+
+        if seen_ids.insert(id.clone()) {
+            desktop_files.push(DesktopFile { id, path });
+        }
+    }
+
+    Ok(())
+}
+
+fn desktop_file_id(root: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(root)
+        .ok()?
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()
+        .map(|components| components.join("-"))
 }
 
 fn resolve_application_directories(
@@ -108,5 +192,51 @@ mod tests {
                 PathBuf::from("/usr/share/applications"),
             ]
         );
+    }
+
+    #[test]
+    fn discovers_desktop_files_with_user_precedence() {
+        let temporary_directory = tempfile::tempdir().unwrap();
+        let user_directory = temporary_directory.path().join("user/applications");
+        let system_directory = temporary_directory.path().join("system/applications");
+        let nested_directory = system_directory.join("tools");
+
+        fs::create_dir_all(&user_directory).unwrap();
+        fs::create_dir_all(&nested_directory).unwrap();
+
+        let user_firefox = user_directory.join("firefox.desktop");
+        let system_firefox = system_directory.join("firefox.desktop");
+        let nested_editor = nested_directory.join("editor.desktop");
+
+        fs::write(&user_firefox, "[Desktop Entry]\nName=User Firefox\n").unwrap();
+        fs::write(&system_firefox, "[Desktop Entry]\nName=System Firefox\n").unwrap();
+        fs::write(&nested_editor, "[Desktop Entry]\nName=Editor\n").unwrap();
+        fs::write(system_directory.join("notes.txt"), "not an application").unwrap();
+
+        let desktop_files = discover_desktop_files(&[user_directory, system_directory]).unwrap();
+
+        assert_eq!(
+            desktop_files,
+            vec![
+                DesktopFile {
+                    id: "firefox.desktop".to_owned(),
+                    path: user_firefox,
+                },
+                DesktopFile {
+                    id: "tools-editor.desktop".to_owned(),
+                    path: nested_editor,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn ignores_missing_application_directories() {
+        let temporary_directory = tempfile::tempdir().unwrap();
+        let missing_directory = temporary_directory.path().join("missing");
+
+        let desktop_files = discover_desktop_files(&[missing_directory]).unwrap();
+
+        assert!(desktop_files.is_empty());
     }
 }
