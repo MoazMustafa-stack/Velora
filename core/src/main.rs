@@ -1,3 +1,4 @@
+mod apps;
 mod config;
 mod ipc;
 
@@ -12,6 +13,8 @@ async fn main() -> Result<()> {
         .init();
 
     let config = config::CoreConfig::from_environment()?;
+    let application_directories = apps::application_directories()?;
+    info!(?application_directories, "application search path resolved");
     info!(socket = %config.socket_path.display(), "Velora Core starting");
     ipc::serve(config).await
 }
