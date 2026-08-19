@@ -9,6 +9,16 @@ pub const CLIENT_NAME: &str = "velora-godot";
 pub const SERVER_NAME: &str = "velora-core";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Application {
+    pub id: String,
+    pub name: String,
+    pub exec: String,
+    pub icon: Option<String>,
+    pub categories: Vec<String>,
+    pub terminal: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
     Hello {

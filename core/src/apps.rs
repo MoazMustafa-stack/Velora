@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use freedesktop_desktop_entry::{DesktopEntry, get_languages_from_env};
 use std::{
     collections::HashSet,
     env,
@@ -6,6 +7,8 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
 };
+use tracing::{debug, warn};
+use velora_protocol::Application;
 
 const DEFAULT_XDG_DATA_DIRS: &str = "/usr/local/share:/usr/share";
 
@@ -32,6 +35,80 @@ pub fn discover_desktop_files(directories: &[PathBuf]) -> Result<Vec<DesktopFile
     }
 
     Ok(desktop_files)
+}
+
+pub fn load_applications(desktop_files: &[DesktopFile]) -> Vec<Application> {
+    let locales = get_languages_from_env();
+    load_applications_with_locales(desktop_files, &locales)
+}
+
+fn load_applications_with_locales(
+    desktop_files: &[DesktopFile],
+    locales: &[String],
+) -> Vec<Application> {
+    let mut applications = desktop_files
+        .iter()
+        .filter_map(|desktop_file| parse_application(desktop_file, locales))
+        .collect::<Vec<_>>();
+
+    applications.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    applications
+}
+
+fn parse_application(desktop_file: &DesktopFile, locales: &[String]) -> Option<Application> {
+    let entry = match DesktopEntry::from_path(desktop_file.path.as_path(), Some(locales)) {
+        Ok(entry) => entry,
+        Err(error) => {
+            warn!(
+                path = %desktop_file.path.display(),
+                %error,
+                "skipping malformed desktop entry"
+            );
+            return None;
+        }
+    };
+
+    if entry.type_() != Some("Application") || entry.hidden() || entry.no_display() {
+        return None;
+    }
+
+    let name = entry.name(locales)?.trim().to_owned();
+    let exec = entry.exec()?.trim().to_owned();
+    if name.is_empty() || exec.is_empty() {
+        debug!(
+            desktop_id = %desktop_file.id,
+            "skipping desktop entry without a usable Name or Exec"
+        );
+        return None;
+    }
+
+    let icon = entry
+        .icon()
+        .map(str::trim)
+        .filter(|icon| !icon.is_empty())
+        .map(str::to_owned);
+    let categories = entry
+        .categories()
+        .unwrap_or_default()
+        .into_iter()
+        .map(str::trim)
+        .filter(|category| !category.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    Some(Application {
+        id: desktop_file.id.clone(),
+        name,
+        exec,
+        icon,
+        categories,
+        terminal: entry.terminal(),
+    })
 }
 
 fn collect_desktop_files(
@@ -238,5 +315,81 @@ mod tests {
         let desktop_files = discover_desktop_files(&[missing_directory]).unwrap();
 
         assert!(desktop_files.is_empty());
+    }
+
+    #[test]
+    fn parses_a_localized_application_model() {
+        let temporary_directory = tempfile::tempdir().unwrap();
+        let path = temporary_directory.path().join("editor.desktop");
+        fs::write(
+            &path,
+            concat!(
+                "[Desktop Entry]\n",
+                "Type=Application\n",
+                "Name=Editor\n",
+                "Name[fr]=Éditeur\n",
+                "Exec=editor --new-window %F\n",
+                "Icon=editor\n",
+                "Categories=Development;IDE;\n",
+                "Terminal=false\n",
+            ),
+        )
+        .unwrap();
+        let files = vec![DesktopFile {
+            id: "editor.desktop".to_owned(),
+            path,
+        }];
+
+        let applications = load_applications_with_locales(&files, &["fr".to_owned()]);
+
+        assert_eq!(
+            applications,
+            vec![Application {
+                id: "editor.desktop".to_owned(),
+                name: "Éditeur".to_owned(),
+                exec: "editor --new-window %F".to_owned(),
+                icon: Some("editor".to_owned()),
+                categories: vec!["Development".to_owned(), "IDE".to_owned()],
+                terminal: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn filters_entries_that_are_not_launchable_or_visible() {
+        let temporary_directory = tempfile::tempdir().unwrap();
+        let fixtures = [
+            (
+                "hidden.desktop",
+                "[Desktop Entry]\nType=Application\nName=Hidden\nExec=hidden\nHidden=true\n",
+            ),
+            (
+                "no-display.desktop",
+                "[Desktop Entry]\nType=Application\nName=Internal\nExec=internal\nNoDisplay=true\n",
+            ),
+            (
+                "link.desktop",
+                "[Desktop Entry]\nType=Link\nName=Website\nURL=https://example.com\n",
+            ),
+            (
+                "missing-exec.desktop",
+                "[Desktop Entry]\nType=Application\nName=No Command\n",
+            ),
+        ];
+        let files = fixtures
+            .into_iter()
+            .map(|(id, contents)| {
+                let path = temporary_directory.path().join(id);
+                fs::write(&path, contents).unwrap();
+                DesktopFile {
+                    id: id.to_owned(),
+                    path,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let applications = load_applications_with_locales(&files, &[]);
+
+        assert!(applications.is_empty());
     }
 }
