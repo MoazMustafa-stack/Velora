@@ -118,7 +118,7 @@ func launch_app(desktop_id: String) -> bool:
 	if state != ConnectionState.READY:
 		connection_changed.emit("CORE // OFFLINE // IPC NOT READY")
 	else:
-		connection_changed.emit("CORE // LAUNCH DISABLED // P2.08")
+		connection_changed.emit("CORE // LAUNCH DISABLED // POLICY REQUIRED")
 	return false
 
 func _attempt_connect() -> void:
