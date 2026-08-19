@@ -107,7 +107,7 @@ impl VeloraSocketBridge {
             self.emit_transport_error("invalid_payload", "payload cannot contain a newline");
             return false;
         }
-        if payload.len() as usize > MAX_MESSAGE_BYTES {
+        if payload.len() > MAX_MESSAGE_BYTES {
             self.emit_transport_error("message_too_large", "payload exceeds 64 KiB");
             return false;
         }
@@ -135,11 +135,8 @@ impl VeloraSocketBridge {
         let Some(worker) = &self.worker else {
             return events;
         };
-        loop {
-            match worker.event_receiver.try_recv() {
-                Ok(event) => events.push(event),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-            }
+        while let Ok(event) = worker.event_receiver.try_recv() {
+            events.push(event);
         }
         events
     }
