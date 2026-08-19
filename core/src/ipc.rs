@@ -182,7 +182,17 @@ async fn handle_connection(stream: UnixStream, applications: Arc<[Application]>)
                 offset,
                 limit,
                 ..
-            }) => application_page(&applications, request_id, offset, limit),
+            }) => match application_page(&applications, request_id, offset, limit) {
+                Ok(response) => response,
+                Err(error) => {
+                    warn!(%error, "cannot build application registry page");
+                    Response::error(
+                        "application_page_failed",
+                        "application registry page exceeds the transport limit",
+                        false,
+                    )
+                }
+            },
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -210,13 +220,49 @@ fn application_page(
     request_id: u64,
     offset: u32,
     limit: u16,
-) -> Response {
+) -> Result<Response> {
     let total = u32::try_from(applications.len()).unwrap_or(u32::MAX);
     let start = usize::try_from(offset)
         .unwrap_or(usize::MAX)
         .min(applications.len());
     let limit = usize::from(limit.clamp(1, MAX_APPLICATION_PAGE_SIZE));
-    let end = start.saturating_add(limit).min(applications.len());
+    let requested_end = start.saturating_add(limit).min(applications.len());
+    let mut end = start;
+
+    while end < requested_end {
+        let candidate = application_page_response(applications, request_id, start, end + 1, total);
+        let encoded_size = serde_json::to_vec(&candidate)
+            .context("failed to size application page")?
+            .len();
+        if encoded_size > MAX_MESSAGE_BYTES {
+            break;
+        }
+        end += 1;
+    }
+
+    if end == start && start < requested_end {
+        bail!(
+            "application {} cannot fit within the 64 KiB transport limit",
+            applications[start].id
+        );
+    }
+
+    Ok(application_page_response(
+        applications,
+        request_id,
+        start,
+        end,
+        total,
+    ))
+}
+
+fn application_page_response(
+    applications: &[Application],
+    request_id: u64,
+    start: usize,
+    end: usize,
+    total: u32,
+) -> Response {
     let next_offset = (end < applications.len()).then(|| u32::try_from(end).unwrap_or(u32::MAX));
 
     Response::Applications {
@@ -309,6 +355,9 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut json = serde_json::to_vec(response).context("failed to serialize response")?;
+    if json.len() > MAX_MESSAGE_BYTES {
+        bail!("refusing to write response larger than 64 KiB");
+    }
     json.push(b'\n');
     writer
         .write_all(&json)
@@ -514,5 +563,47 @@ mod tests {
 
         drop(reader);
         server_task.await.unwrap().unwrap();
+    }
+
+    #[test]
+    fn application_pages_respect_the_encoded_transport_limit() {
+        let applications = (1..=2)
+            .map(|number| Application {
+                id: format!("large-{number}.desktop"),
+                name: format!("Large Application {number}"),
+                exec: "x".repeat(40 * 1024),
+                icon: None,
+                categories: Vec::new(),
+                terminal: false,
+            })
+            .collect::<Vec<_>>();
+
+        let response = application_page(&applications, 1, 0, 2).unwrap();
+        let encoded = serde_json::to_vec(&response).unwrap();
+
+        assert!(encoded.len() <= MAX_MESSAGE_BYTES);
+        assert!(matches!(
+            response,
+            Response::Applications {
+                applications,
+                next_offset: Some(1),
+                total: 2,
+                ..
+            } if applications.len() == 1
+        ));
+    }
+
+    #[test]
+    fn rejects_an_application_that_cannot_fit_in_one_frame() {
+        let applications = vec![Application {
+            id: "oversized.desktop".to_owned(),
+            name: "Oversized".to_owned(),
+            exec: "x".repeat(MAX_MESSAGE_BYTES),
+            icon: None,
+            categories: Vec::new(),
+            terminal: false,
+        }];
+
+        assert!(application_page(&applications, 1, 0, 1).is_err());
     }
 }
