@@ -5,7 +5,7 @@
 > visual direction, and Linux integrations are expected to change.
 
 [![Status: work in progress](https://img.shields.io/badge/status-work_in_progress-f59e0b)](#project-status)
-[![Phase: pixel hub](https://img.shields.io/badge/phase-pixel_hub-41d6c3)](#current-status)
+[![Phase: native IPC](https://img.shields.io/badge/phase-native_IPC-41d6c3)](#current-status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
 Velora is an experimental pixel-art desktop interface for Linux. It runs
@@ -32,29 +32,32 @@ hub, eight-direction movement with four-direction facing, sprinting, physical
 room and object boundaries, and facing-aware application stations. A working
 pause/help overlay freezes world input and keeps controls visible in-game.
 
-The visuals are generated from an original restrained palette at runtime, so
-the prototype stays tiny and does not ship copied game artwork. A separate Rust
-core remains in the repository. VS Code, Firefox, and Terminal stations send
-semantic desktop IDs to an offline-safe boundary; real launching waits for the
-native Unix-socket transport in Phase 2.
+Phase 2 begins with a native Rust GDExtension that carries protocol v2 messages
+over a user-only Unix socket. The frontend performs a hello/welcome handshake,
+heartbeat, and reconnect without blocking the Godot main thread. Application
+discovery and real launching remain disabled until the next reviewed change.
 
 ## Run
 
+Start the core and frontend in separate terminals:
+
 ```bash
+./scripts/velora.sh core
 ./scripts/velora.sh run
 ```
 
 The default window is 960 × 540, rendered from a 320 × 180 internal canvas with
-integer nearest-neighbour scaling. Install Godot 4.7 first if needed.
+integer nearest-neighbour scaling. Install Godot 4.7 and Rust first if needed.
 
-The unified development runner also exposes the common workflows:
+The unified development runner exposes the common workflows:
 
 ```bash
-./scripts/velora.sh edit   # open the Godot editor
-./scripts/velora.sh check  # Godot acceptance tests + Rust checks
-./scripts/velora.sh perf   # rendered integrated-GPU benchmark
-./scripts/velora.sh all    # all automated and rendered checks
-./scripts/velora.sh core   # run the Rust core daemon
+./scripts/velora.sh edit          # build the bridge and open Godot
+./scripts/velora.sh build-bridge  # compile the Rust GDExtension
+./scripts/velora.sh ipc-check     # live core ↔ Godot handshake test
+./scripts/velora.sh check         # Godot acceptance tests + Rust workspace
+./scripts/velora.sh perf          # rendered integrated-GPU benchmark
+./scripts/velora.sh all           # all automated and rendered checks
 ```
 
 ## Controls
@@ -67,16 +70,15 @@ The unified development runner also exposes the common workflows:
 ## Validate
 
 ```bash
-./scripts/check-godot.sh
-./scripts/check.sh
-./scripts/check-performance.sh
+./scripts/velora.sh check
+./scripts/velora.sh ipc-check
+./scripts/velora.sh perf
 ```
 
-The Godot check boots the main scene headlessly and runs acceptance tests for
-the P1.01–P1.09 foundation, hub, controller, collisions, interaction, menu,
-reusable stations, offline-safe backend handoff, and keyboard-only operation.
-The performance check opens a rendered window and validates P1.10 against the
-active graphics adapter.
+The IPC check builds the ignored native library, starts the core on an isolated
+temporary socket, and validates handshake plus ping/pong from headless Godot.
+The performance check opens a rendered window and validates the integrated-GPU
+baseline.
 
 ### Integrated graphics baseline
 

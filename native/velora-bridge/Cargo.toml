@@ -1,0 +1,13 @@
+[package]
+name = "velora-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unix-socket GDExtension bridge for Velora"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+godot = { version = "=0.5.5", features = ["api-4-7"] }
+velora-protocol = { path = "../../crates/velora-protocol" }

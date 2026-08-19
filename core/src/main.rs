@@ -1,7 +1,5 @@
-mod apps;
 mod config;
 mod ipc;
-mod protocol;
 
 use anyhow::Result;
 use tracing::info;
