@@ -27,6 +27,19 @@ func _run() -> void:
 	var ready := await _wait_until(func(): return backend.state == BackendClient.ConnectionState.READY, 5.0)
 	_check(ready, "P2.04 client completes hello/welcome handshake")
 	_check(backend.connected and backend.welcome_received, "P2.04 ready state reflects a validated welcome")
+	var registry_ready := await _wait_until(func(): return backend.applications.size() == 35, 3.0)
+	_check(registry_ready, "P2.07 frontend assembles the paginated application registry")
+	if registry_ready:
+		var application: Dictionary = {}
+		for candidate in backend.applications:
+			if candidate.get("id") == "velora-test.desktop":
+				application = candidate
+				break
+		_check(not application.is_empty(), "P2.07 registry contains the requested desktop ID")
+		_check(application.get("id") == "velora-test.desktop", "P2.07 preserves the desktop ID")
+		_check(application.get("name") == "Velora Test Application", "P2.07 preserves the display name")
+		_check(application.get("exec") == "/usr/bin/true", "P2.07 keeps Exec opaque")
+		_check(application.get("categories") == ["Utility", "Test"], "P2.07 preserves categories")
 	_check(backend.request_ping(), "P2.04 client sends a typed ping")
 	var pong := await _wait_until(func(): return backend.last_pong_request_id > 0, 3.0)
 	_check(pong, "P2.04 core returns the matching pong")
@@ -44,14 +57,16 @@ func _run() -> void:
 	)
 	_check(reconnected, "P2.05 client reconnects and handshakes again")
 	_check(backend.connected and backend.welcome_received, "P2.05 reconnected client is ready")
+	var registry_reloaded := await _wait_until(func(): return backend.applications.size() == 35, 3.0)
+	_check(registry_reloaded, "P2.07 registry reloads after reconnect")
 
 	backend.disconnect_from_core()
 	await process_frame
 	_check(backend.state == BackendClient.ConnectionState.DISCONNECTED, "P2.04 explicit disconnect is clean")
 
 	if failures.is_empty():
-		print("PR 3 native IPC validation passed.")
+		print("PR 4 application registry IPC validation passed.")
 		quit(0)
 	else:
-		push_error("PR 3 IPC validation failed: %s" % failures)
+		push_error("PR 4 IPC validation failed: %s" % [failures])
 		quit(1)

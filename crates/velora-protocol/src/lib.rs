@@ -5,6 +5,8 @@ use thiserror::Error;
 pub const PROTOCOL_VERSION: u8 = 2;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const HANDSHAKE_TIMEOUT_SECONDS: u64 = 5;
+pub const DEFAULT_APPLICATION_PAGE_SIZE: u16 = 32;
+pub const MAX_APPLICATION_PAGE_SIZE: u16 = 64;
 pub const CLIENT_NAME: &str = "velora-godot";
 pub const SERVER_NAME: &str = "velora-core";
 
@@ -30,6 +32,12 @@ pub enum Request {
         protocol_version: u8,
         request_id: u64,
     },
+    ListApplications {
+        protocol_version: u8,
+        request_id: u64,
+        offset: u32,
+        limit: u16,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -43,6 +51,13 @@ pub enum Response {
     Pong {
         protocol_version: u8,
         request_id: u64,
+    },
+    Applications {
+        protocol_version: u8,
+        request_id: u64,
+        applications: Vec<Application>,
+        next_offset: Option<u32>,
+        total: u32,
     },
     Error {
         protocol_version: u8,
@@ -59,6 +74,9 @@ impl Request {
                 protocol_version, ..
             }
             | Self::Ping {
+                protocol_version, ..
+            }
+            | Self::ListApplications {
                 protocol_version, ..
             } => *protocol_version,
         }
@@ -137,5 +155,27 @@ mod tests {
                 retryable: false,
             }
         );
+    }
+
+    #[test]
+    fn round_trips_an_application_page() {
+        let response = Response::Applications {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 9,
+            applications: vec![Application {
+                id: "org.example.Editor.desktop".to_owned(),
+                name: "Editor".to_owned(),
+                exec: "editor %F".to_owned(),
+                icon: Some("editor".to_owned()),
+                categories: vec!["Development".to_owned()],
+                terminal: false,
+            }],
+            next_offset: Some(32),
+            total: 40,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
     }
 }

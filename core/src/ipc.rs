@@ -4,6 +4,7 @@ use std::{
     fs, io,
     os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -13,10 +14,11 @@ use tokio::{
 };
 use tracing::{info, warn};
 use velora_protocol::{
-    HANDSHAKE_TIMEOUT_SECONDS, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, Request, Response, SERVER_NAME,
+    Application, HANDSHAKE_TIMEOUT_SECONDS, MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES,
+    PROTOCOL_VERSION, Request, Response, SERVER_NAME,
 };
 
-pub async fn serve(config: CoreConfig) -> Result<()> {
+pub async fn serve(config: CoreConfig, applications: Arc<[Application]>) -> Result<()> {
     prepare_socket_path(&config.socket_path).await?;
     let listener = UnixListener::bind(&config.socket_path)
         .with_context(|| format!("cannot bind {}", config.socket_path.display()))?;
@@ -29,8 +31,9 @@ pub async fn serve(config: CoreConfig) -> Result<()> {
         tokio::select! {
             result = listener.accept() => match result {
                 Ok((stream, _)) => {
+                    let applications = Arc::clone(&applications);
                     tokio::spawn(async move {
-                        if let Err(error) = handle_connection(stream).await {
+                        if let Err(error) = handle_connection(stream, applications).await {
                             warn!(%error, "frontend connection failed");
                         }
                     });
@@ -77,7 +80,7 @@ async fn prepare_socket_path(path: &Path) -> Result<()> {
     }
 }
 
-async fn handle_connection(stream: UnixStream) -> Result<()> {
+async fn handle_connection(stream: UnixStream, applications: Arc<[Application]>) -> Result<()> {
     info!("frontend connected");
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -174,6 +177,12 @@ async fn handle_connection(stream: UnixStream) -> Result<()> {
                 protocol_version: PROTOCOL_VERSION,
                 request_id,
             },
+            Ok(Request::ListApplications {
+                request_id,
+                offset,
+                limit,
+                ..
+            }) => application_page(&applications, request_id, offset, limit),
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -194,6 +203,29 @@ async fn handle_connection(stream: UnixStream) -> Result<()> {
     }
     info!("frontend disconnected");
     Ok(())
+}
+
+fn application_page(
+    applications: &[Application],
+    request_id: u64,
+    offset: u32,
+    limit: u16,
+) -> Response {
+    let total = u32::try_from(applications.len()).unwrap_or(u32::MAX);
+    let start = usize::try_from(offset)
+        .unwrap_or(usize::MAX)
+        .min(applications.len());
+    let limit = usize::from(limit.clamp(1, MAX_APPLICATION_PAGE_SIZE));
+    let end = start.saturating_add(limit).min(applications.len());
+    let next_offset = (end < applications.len()).then(|| u32::try_from(end).unwrap_or(u32::MAX));
+
+    Response::Applications {
+        protocol_version: PROTOCOL_VERSION,
+        request_id,
+        applications: applications[start..end].to_vec(),
+        next_offset,
+        total,
+    }
 }
 
 enum Frame {
@@ -355,7 +387,7 @@ mod tests {
     #[tokio::test]
     async fn handshake_and_ping_round_trip() {
         let (server, mut client) = UnixStream::pair().unwrap();
-        let server_task = tokio::spawn(handle_connection(server));
+        let server_task = tokio::spawn(handle_connection(server, Arc::from([])));
         let hello = serde_json::to_string(&Request::Hello {
             protocol_version: PROTOCOL_VERSION,
             client_name: "test-client".to_owned(),
@@ -401,7 +433,7 @@ mod tests {
     #[tokio::test]
     async fn ping_before_hello_is_rejected() {
         let (server, mut client) = UnixStream::pair().unwrap();
-        let server_task = tokio::spawn(handle_connection(server));
+        let server_task = tokio::spawn(handle_connection(server, Arc::from([])));
         let ping = serde_json::to_string(&Request::Ping {
             protocol_version: PROTOCOL_VERSION,
             request_id: 1,
@@ -418,6 +450,69 @@ mod tests {
             serde_json::from_str::<Response>(line.trim()).unwrap(),
             Response::Error { code, .. } if code == "handshake_required"
         ));
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn returns_application_registry_in_pages() {
+        let applications: Arc<[Application]> = Arc::from(
+            (1..=3)
+                .map(|number| Application {
+                    id: format!("app-{number}.desktop"),
+                    name: format!("Application {number}"),
+                    exec: format!("app-{number}"),
+                    icon: None,
+                    categories: Vec::new(),
+                    terminal: false,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection(server, applications));
+
+        let hello = serde_json::to_string(&Request::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_name: "test-client".to_owned(),
+            client_version: "0.2.0".to_owned(),
+        })
+        .unwrap();
+        client
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+
+        let request = serde_json::to_string(&Request::ListApplications {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 12,
+            offset: 0,
+            limit: 2,
+        })
+        .unwrap();
+        reader
+            .get_mut()
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
+        line.clear();
+        reader.read_line(&mut line).await.unwrap();
+
+        assert!(matches!(
+            serde_json::from_str::<Response>(line.trim()).unwrap(),
+            Response::Applications {
+                request_id: 12,
+                applications,
+                next_offset: Some(2),
+                total: 3,
+                ..
+            } if applications.len() == 2
+                && applications[0].id == "app-1.desktop"
+                && applications[1].id == "app-2.desktop"
+        ));
+
+        drop(reader);
         server_task.await.unwrap().unwrap();
     }
 }

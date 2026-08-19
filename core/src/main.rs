@@ -32,5 +32,5 @@ async fn main() -> Result<()> {
         );
     }
     info!(socket = %config.socket_path.display(), "Velora Core starting");
-    ipc::serve(config).await
+    ipc::serve(config, applications.into()).await
 }
