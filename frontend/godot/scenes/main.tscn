@@ -154,6 +154,29 @@ theme_override_constants/margin_bottom = 3
 theme_override_colors/font_color = Color(0.603922, 0.956863, 0.905882, 1)
 theme_override_font_sizes/font_size = 8
 text = "VELORA // POCKET TERMINAL"
+clip_text = true
+text_overrun_behavior = 3
+
+[node name="ConnectionPanel" type="PanelContainer" parent="HUD"]
+z_index = 20
+offset_left = 218.0
+offset_top = 6.0
+offset_right = 314.0
+offset_bottom = 29.0
+
+[node name="Margin" type="MarginContainer" parent="HUD/ConnectionPanel"]
+theme_override_constants/margin_left = 4
+theme_override_constants/margin_top = 3
+theme_override_constants/margin_right = 4
+theme_override_constants/margin_bottom = 3
+
+[node name="Connection" type="Label" parent="HUD/ConnectionPanel/Margin"]
+theme_override_colors/font_color = Color(0.878431, 0.352941, 0.403922, 1)
+theme_override_font_sizes/font_size = 7
+text = "CORE OFFLINE"
+horizontal_alignment = 1
+clip_text = true
+text_overrun_behavior = 3
 
 [node name="PromptPanel" type="PanelContainer" parent="HUD"]
 offset_left = 82.0
@@ -172,6 +195,8 @@ theme_override_colors/font_color = Color(0.862745, 0.901961, 0.94902, 1)
 theme_override_font_sizes/font_size = 9
 text = "[E] USE  VS CODE"
 horizontal_alignment = 1
+clip_text = true
+text_overrun_behavior = 3
 
 [node name="Help" type="Label" parent="HUD"]
 offset_left = 7.0
@@ -247,5 +272,7 @@ text = "WASD / ARROWS     MOVE\nSHIFT              SPRINT\nE / ENTER          IN
 layout_mode = 2
 theme_override_colors/font_color = Color(0.584314, 0.65098, 0.760784, 1)
 theme_override_font_sizes/font_size = 7
-text = "CORE OFFLINE // NO APPS LAUNCHED"
+text = "CORE OFFLINE"
 horizontal_alignment = 1
+clip_text = true
+text_overrun_behavior = 3

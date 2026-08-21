@@ -68,6 +68,13 @@ impl LaunchError {
             Self::Spawn(_) => "launch_failed",
         }
     }
+
+    pub fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited | Self::ProcessLimitReached | Self::Spawn(_)
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -133,10 +140,7 @@ impl LaunchService {
             .exec()
             .ok_or_else(|| LaunchError::MalformedEntry("missing Exec".to_owned()))?;
 
-        // P2.06 intentionally has no file/URI payload support.
-        if raw_exec.contains('%') {
-            return Err(LaunchError::UnsupportedFieldCode);
-        }
+        validate_exec_field_codes(raw_exec)?;
 
         let args = entry
             .parse_exec()
@@ -223,6 +227,26 @@ fn is_shell_wrapper(args: &[String]) -> bool {
         && args.iter().skip(1).any(|arg| arg == "-c" || arg == "-lc")
 }
 
+fn validate_exec_field_codes(raw_exec: &str) -> Result<(), LaunchError> {
+    for argument in raw_exec.split_ascii_whitespace() {
+        if !argument.contains('%') {
+            continue;
+        }
+
+        // Velora does not send a file or URI payload yet. These standalone
+        // placeholders are therefore safely omitted by `parse_exec()`.
+        if matches!(argument, "%f" | "%F" | "%u" | "%U") {
+            continue;
+        }
+
+        // Embedded, deprecated, and context-expanding field codes stay
+        // rejected until Velora implements each expansion deliberately.
+        return Err(LaunchError::UnsupportedFieldCode);
+    }
+
+    Ok(())
+}
+
 fn executable_available(program: &str) -> bool {
     let path = Path::new(program);
 
@@ -245,4 +269,29 @@ fn is_executable_file(path: &Path) -> bool {
     fs::metadata(path)
         .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allows_standalone_file_and_uri_placeholders_without_a_payload() {
+        for exec in ["code %F", "editor %f", "browser %U", "viewer %u"] {
+            assert!(validate_exec_field_codes(exec).is_ok(), "rejected {exec}");
+        }
+    }
+
+    #[test]
+    fn rejects_embedded_or_unimplemented_field_codes() {
+        for exec in ["code --file=%F", "launcher %i", "viewer %k", "tool %%"] {
+            assert!(
+                matches!(
+                    validate_exec_field_codes(exec),
+                    Err(LaunchError::UnsupportedFieldCode)
+                ),
+                "accepted {exec}"
+            );
+        }
+    }
 }

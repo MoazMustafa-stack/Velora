@@ -71,10 +71,14 @@ func _run() -> void:
 		backend.last_requested_desktop_id == "code.desktop",
 		"P2.08 resolved station reaches the typed launch boundary"
 	)
-	_check(workstation.status == "attention", "P2.08 interaction updates station feedback")
+	_check(workstation.status == "ready", "P2.09 failed offline launch leaves station usable")
 	_check(
-		hud.status.text.contains("LAUNCH REQUESTED"),
-		"P2.08 reports a launch request without claiming completion"
+		workstation.interaction_prompt() == "[E] RETRY  VISUAL STUDIO CODE",
+		"P2.09 recoverable launch failure provides a keyboard retry"
+	)
+	_check(
+		hud.status.text.contains("CORE OFFLINE"),
+		"P2.09 reports the actual offline launch failure"
 	)
 
 	main._on_interaction_requested(terminal_station)

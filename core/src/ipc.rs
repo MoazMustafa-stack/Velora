@@ -213,7 +213,14 @@ async fn handle_connection(
                     desktop_id,
                     process_id,
                 },
-                Err(error) => Response::error(error.code(), error.to_string(), false),
+                Err(error) => Response::LaunchRejected {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    desktop_id,
+                    code: error.code().to_owned(),
+                    message: error.to_string(),
+                    retryable: error.retryable(),
+                },
             },
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
@@ -594,6 +601,59 @@ mod tests {
                 && applications[0].id == "app-1.desktop"
                 && applications[1].id == "app-2.desktop"
         ));
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn correlates_launch_rejections_with_the_request() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+        ));
+
+        let hello = serde_json::to_string(&Request::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_name: "test-client".to_owned(),
+            client_version: "0.2.0".to_owned(),
+        })
+        .unwrap();
+        client
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+
+        let request = serde_json::to_string(&Request::LaunchApplication {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 27,
+            desktop_id: "missing.desktop".to_owned(),
+        })
+        .unwrap();
+        reader
+            .get_mut()
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
+        line.clear();
+        reader.read_line(&mut line).await.unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<Response>(line.trim()).unwrap(),
+            Response::LaunchRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 27,
+                desktop_id: "missing.desktop".to_owned(),
+                code: "unknown_application".to_owned(),
+                message: "application is not present in the registry".to_owned(),
+                retryable: false,
+            }
+        );
 
         drop(reader);
         server_task.await.unwrap().unwrap();
