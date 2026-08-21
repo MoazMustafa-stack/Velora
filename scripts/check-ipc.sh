@@ -33,7 +33,7 @@ printf '%s\n' \
   '[Desktop Entry]' \
   'Type=Application' \
   'Name=Velora Test Application' \
-  'Exec=/usr/bin/true' \
+  'Exec=/usr/bin/true %F' \
   'Icon=utilities-terminal' \
   'Categories=Utility;Test;' \
   'Terminal=false' \
