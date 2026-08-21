@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use freedesktop_desktop_entry::{DesktopEntry, get_languages_from_env};
+use std::collections::{HashMap, HashSet};
 use std::{
-    collections::HashSet,
     env,
     ffi::{OsStr, OsString},
     fs, io,
@@ -58,6 +58,22 @@ fn load_applications_with_locales(
             .then_with(|| left.id.cmp(&right.id))
     });
     applications
+}
+
+pub fn launch_paths(
+    desktop_files: &[DesktopFile],
+    applications: &[Application],
+) -> HashMap<String, PathBuf> {
+    let valid_ids: HashSet<&str> = applications
+        .iter()
+        .map(|application| application.id.as_str())
+        .collect();
+
+    desktop_files
+        .iter()
+        .filter(|desktop_file| valid_ids.contains(desktop_file.id.as_str()))
+        .map(|desktop_file| (desktop_file.id.clone(), desktop_file.path.clone()))
+        .collect()
 }
 
 fn parse_application(desktop_file: &DesktopFile, locales: &[String]) -> Option<Application> {

@@ -70,7 +70,7 @@ pub enum Response {
         message: String,
         retryable: bool,
     },
-    LaunchAccepted{
+    LaunchAccepted {
         protocol_version: u8,
         request_id: u64,
         desktop_id: String,
@@ -90,7 +90,7 @@ impl Request {
             | Self::ListApplications {
                 protocol_version, ..
             }
-            | Self::LaunchApplication{
+            | Self::LaunchApplication {
                 protocol_version, ..
             } => *protocol_version,
         }

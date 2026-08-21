@@ -73,8 +73,8 @@ func _run() -> void:
 	)
 	_check(workstation.status == "attention", "P2.08 interaction updates station feedback")
 	_check(
-		hud.status.text.contains("POLICY REQUIRED"),
-		"P2.08 keeps real launching disabled until P2.06"
+		hud.status.text.contains("LAUNCH REQUESTED"),
+		"P2.08 reports a launch request without claiming completion"
 	)
 
 	main._on_interaction_requested(terminal_station)

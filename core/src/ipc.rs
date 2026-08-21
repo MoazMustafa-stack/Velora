@@ -1,4 +1,4 @@
-use crate::config::CoreConfig;
+use crate::{config::CoreConfig, launch::LaunchService};
 use anyhow::{Context, Result, bail};
 use std::{
     fs, io,
@@ -18,7 +18,11 @@ use velora_protocol::{
     PROTOCOL_VERSION, Request, Response, SERVER_NAME,
 };
 
-pub async fn serve(config: CoreConfig, applications: Arc<[Application]>) -> Result<()> {
+pub async fn serve(
+    config: CoreConfig,
+    applications: Arc<[Application]>,
+    launcher: Arc<LaunchService>,
+) -> Result<()> {
     prepare_socket_path(&config.socket_path).await?;
     let listener = UnixListener::bind(&config.socket_path)
         .with_context(|| format!("cannot bind {}", config.socket_path.display()))?;
@@ -32,8 +36,9 @@ pub async fn serve(config: CoreConfig, applications: Arc<[Application]>) -> Resu
             result = listener.accept() => match result {
                 Ok((stream, _)) => {
                     let applications = Arc::clone(&applications);
+                    let launcher = Arc::clone(&launcher);
                     tokio::spawn(async move {
-                        if let Err(error) = handle_connection(stream, applications).await {
+                        if let Err(error) = handle_connection(stream, applications, launcher).await {
                             warn!(%error, "frontend connection failed");
                         }
                     });
@@ -80,7 +85,11 @@ async fn prepare_socket_path(path: &Path) -> Result<()> {
     }
 }
 
-async fn handle_connection(stream: UnixStream, applications: Arc<[Application]>) -> Result<()> {
+async fn handle_connection(
+    stream: UnixStream,
+    applications: Arc<[Application]>,
+    launcher: Arc<LaunchService>,
+) -> Result<()> {
     info!("frontend connected");
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -192,6 +201,19 @@ async fn handle_connection(stream: UnixStream, applications: Arc<[Application]>)
                         false,
                     )
                 }
+            },
+            Ok(Request::LaunchApplication {
+                request_id,
+                desktop_id,
+                ..
+            }) => match launcher.launch(&desktop_id).await {
+                Ok(process_id) => Response::LaunchAccepted {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    desktop_id,
+                    process_id,
+                },
+                Err(error) => Response::error(error.code(), error.to_string(), false),
             },
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
@@ -436,7 +458,11 @@ mod tests {
     #[tokio::test]
     async fn handshake_and_ping_round_trip() {
         let (server, mut client) = UnixStream::pair().unwrap();
-        let server_task = tokio::spawn(handle_connection(server, Arc::from([])));
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+        ));
         let hello = serde_json::to_string(&Request::Hello {
             protocol_version: PROTOCOL_VERSION,
             client_name: "test-client".to_owned(),
@@ -482,7 +508,11 @@ mod tests {
     #[tokio::test]
     async fn ping_before_hello_is_rejected() {
         let (server, mut client) = UnixStream::pair().unwrap();
-        let server_task = tokio::spawn(handle_connection(server, Arc::from([])));
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+        ));
         let ping = serde_json::to_string(&Request::Ping {
             protocol_version: PROTOCOL_VERSION,
             request_id: 1,
@@ -517,7 +547,11 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         let (server, mut client) = UnixStream::pair().unwrap();
-        let server_task = tokio::spawn(handle_connection(server, applications));
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            applications,
+            Arc::new(LaunchService::empty()),
+        ));
 
         let hello = serde_json::to_string(&Request::Hello {
             protocol_version: PROTOCOL_VERSION,

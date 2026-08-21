@@ -1,6 +1,12 @@
 extends SceneTree
 
 var failures: Array[String] = []
+var launch_desktop_id := ""
+var launch_process_id := 0
+
+func _on_launch_finished(desktop_id: String, process_id: int) -> void:
+	launch_desktop_id = desktop_id
+	launch_process_id = process_id
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -24,6 +30,7 @@ func _run() -> void:
 	_check(ClassDB.class_exists("VeloraSocketBridge"), "P2.03 native bridge is registered")
 	var backend := BackendClient.new()
 	root.add_child(backend)
+	backend.launch_finished.connect(_on_launch_finished)
 	var ready := await _wait_until(func(): return backend.state == BackendClient.ConnectionState.READY, 5.0)
 	_check(ready, "P2.04 client completes hello/welcome handshake")
 	_check(backend.connected and backend.welcome_received, "P2.04 ready state reflects a validated welcome")
@@ -40,6 +47,10 @@ func _run() -> void:
 		_check(application.get("name") == "Velora Test Application", "P2.07 preserves the display name")
 		_check(application.get("exec") == "/usr/bin/true", "P2.07 keeps Exec opaque")
 		_check(application.get("categories") == ["Utility", "Test"], "P2.07 preserves categories")
+		_check(backend.launch_app("velora-test.desktop"), "P2.06 sends a launch request for a registered application")
+		var launch_ready := await _wait_until(func(): return launch_process_id > 0, 3.0)
+		_check(launch_ready, "P2.06 Core accepts a safe application launch")
+		_check(launch_desktop_id == "velora-test.desktop", "P2.06 launch response preserves the desktop ID")
 	_check(backend.request_ping(), "P2.04 client sends a typed ping")
 	var pong := await _wait_until(func(): return backend.last_pong_request_id > 0, 3.0)
 	_check(pong, "P2.04 core returns the matching pong")

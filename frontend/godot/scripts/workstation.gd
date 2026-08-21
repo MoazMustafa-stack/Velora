@@ -31,7 +31,7 @@ func interact() -> void:
 	elif application.is_empty():
 		status_changed.emit(display_name + " // APPLICATION NOT FOUND")
 	else:
-		status_changed.emit(application_label() + " // CONNECTED // POLICY REQUIRED")
+		status_changed.emit(application_label() + " // LAUNCH REQUESTED")
 
 func bind_application(value: Dictionary) -> void:
 	registry_checked = true

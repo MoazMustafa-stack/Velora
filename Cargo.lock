@@ -589,6 +589,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -6,6 +6,7 @@ signal state_changed(state: ConnectionState)
 signal latency_changed(milliseconds: int)
 signal applications_changed(applications: Array)
 signal application_state_changed(desktop_id: String, running: bool)
+signal launch_finished(desktop_id: String, process_id: int)
 
 enum ConnectionState {
 	DISCONNECTED,
@@ -43,6 +44,7 @@ var _waiting_for_pong := false
 var _next_request_id := 1
 var _ping_started_msec := 0
 var _application_request_id := 0
+var _launch_request_id := 0
 var _application_offset := 0
 var _application_total := 0
 var _pending_applications: Array[Dictionary] = []
@@ -91,6 +93,7 @@ func disconnect_from_core() -> void:
 	_waiting_for_pong = false
 	_pending_applications.clear()
 	_application_request_id = 0
+	_launch_request_id = 0
 	_set_state(ConnectionState.DISCONNECTED, "CORE // DISCONNECTED")
 
 func request_ping() -> bool:
@@ -117,9 +120,15 @@ func launch_app(desktop_id: String) -> bool:
 	last_requested_desktop_id = desktop_id
 	if state != ConnectionState.READY:
 		connection_changed.emit("CORE // OFFLINE // IPC NOT READY")
-	else:
-		connection_changed.emit("CORE // LAUNCH DISABLED // POLICY REQUIRED")
-	return false
+		return false
+	var request_id := _take_request_id()
+	_launch_request_id = request_id
+	return _send_message({
+		"type": "launch_application",
+		"protocol_version": PROTOCOL_VERSION,
+		"request_id": request_id,
+		"desktop_id": desktop_id,
+	})
 
 func _attempt_connect() -> void:
 	if not _bridge or _socket_path.is_empty():
@@ -128,6 +137,7 @@ func _attempt_connect() -> void:
 	welcome_received = false
 	_waiting_for_pong = false
 	_application_request_id = 0
+	_launch_request_id = 0
 	_set_state(ConnectionState.CONNECTING, "CORE // CONNECTING")
 	_bridge.connect_socket(_socket_path)
 
@@ -145,6 +155,7 @@ func _on_socket_disconnected(_reason: String) -> void:
 	welcome_received = false
 	_waiting_for_pong = false
 	_application_request_id = 0
+	_launch_request_id = 0
 	if state != ConnectionState.INCOMPATIBLE and state != ConnectionState.DISCONNECTED:
 		_schedule_reconnect()
 
@@ -178,10 +189,21 @@ func _on_line_received(payload: String) -> void:
 				latency_changed.emit(Time.get_ticks_msec() - _ping_started_msec)
 		"applications":
 			_on_applications_page(message)
+		"launch_accepted":
+			var request_id := int(message.get("request_id", 0))
+			if request_id != _launch_request_id:
+				connection_changed.emit("CORE // STALE LAUNCH RESPONSE")
+				return
+			_launch_request_id = 0
+			var desktop_id := String(message.get("desktop_id", ""))
+			var process_id := int(message.get("process_id", 0))
+			launch_finished.emit(desktop_id, process_id)
+			connection_changed.emit("CORE // LAUNCHED // %s // PID %d" % [desktop_id, process_id])
 		"error":
 			if String(message.get("code", "")) == "protocol_mismatch":
 				_mark_incompatible()
 			else:
+				_launch_request_id = 0
 				connection_changed.emit("CORE // " + String(message.get("code", "ERROR")).to_upper())
 		_:
 			connection_changed.emit("CORE // UNKNOWN RESPONSE")
