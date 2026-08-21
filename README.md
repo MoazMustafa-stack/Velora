@@ -32,10 +32,12 @@ hub, eight-direction movement with four-direction facing, sprinting, physical
 room and object boundaries, and facing-aware application stations. A working
 pause/help overlay freezes world input and keeps controls visible in-game.
 
-Phase 2 begins with a native Rust GDExtension that carries protocol v2 messages
+Phase 2 provides a native Rust GDExtension that carries protocol v2 messages
 over a user-only Unix socket. The frontend performs a hello/welcome handshake,
-heartbeat, and reconnect without blocking the Godot main thread. Application
-discovery and real launching remain disabled until the next reviewed change.
+heartbeat, and reconnect without blocking the Godot main thread. Core discovers
+and parses XDG desktop entries, then sends the filtered application registry to
+Godot in bounded pages. Real application launching remains disabled until its
+separate safety-reviewed change.
 
 ## Run
 
@@ -75,8 +77,9 @@ The unified development runner exposes the common workflows:
 ./scripts/velora.sh perf
 ```
 
-The IPC check builds the ignored native library, starts the core on an isolated
-temporary socket, and validates handshake plus ping/pong from headless Godot.
+The IPC check builds the ignored native library, starts the core with an isolated
+desktop-entry fixture and temporary socket, then validates handshake, ping/pong,
+reconnect, and application-registry transfer from headless Godot.
 The performance check opens a rendered window and validates the integrated-GPU
 baseline.
 

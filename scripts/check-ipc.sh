@@ -18,10 +18,37 @@ trap cleanup EXIT
 
 export XDG_RUNTIME_DIR="$test_dir/runtime"
 export XDG_DATA_HOME="$test_dir/data"
+export XDG_DATA_DIRS="$test_dir/system-data"
 export XDG_CONFIG_HOME="$test_dir/config"
 export XDG_CACHE_HOME="$test_dir/cache"
-mkdir -p "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+mkdir -p \
+  "$XDG_RUNTIME_DIR" \
+  "$XDG_DATA_HOME/applications" \
+  "$XDG_DATA_DIRS/applications" \
+  "$XDG_CONFIG_HOME" \
+  "$XDG_CACHE_HOME"
 chmod 700 "$XDG_RUNTIME_DIR"
+
+printf '%s\n' \
+  '[Desktop Entry]' \
+  'Type=Application' \
+  'Name=Velora Test Application' \
+  'Exec=/usr/bin/true' \
+  'Icon=utilities-terminal' \
+  'Categories=Utility;Test;' \
+  'Terminal=false' \
+  >"$XDG_DATA_HOME/applications/velora-test.desktop"
+
+for application_number in $(seq -w 1 34); do
+  printf '%s\n' \
+    '[Desktop Entry]' \
+    'Type=Application' \
+    "Name=Pagination Fixture $application_number" \
+    "Exec=/usr/bin/true --fixture $application_number" \
+    'Categories=Utility;Test;' \
+    'Terminal=false' \
+    >"$XDG_DATA_HOME/applications/velora-page-$application_number.desktop"
+done
 
 "$script_dir/build-bridge.sh"
 cargo build --manifest-path "$repo_dir/Cargo.toml" -p velora-core
