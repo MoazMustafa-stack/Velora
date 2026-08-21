@@ -38,6 +38,11 @@ pub enum Request {
         offset: u32,
         limit: u16,
     },
+    LaunchApplication {
+        protocol_version: u8,
+        request_id: u64,
+        desktop_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -65,6 +70,20 @@ pub enum Response {
         message: String,
         retryable: bool,
     },
+    LaunchAccepted {
+        protocol_version: u8,
+        request_id: u64,
+        desktop_id: String,
+        process_id: u32,
+    },
+    LaunchRejected {
+        protocol_version: u8,
+        request_id: u64,
+        desktop_id: String,
+        code: String,
+        message: String,
+        retryable: bool,
+    },
 }
 
 impl Request {
@@ -77,6 +96,9 @@ impl Request {
                 protocol_version, ..
             }
             | Self::ListApplications {
+                protocol_version, ..
+            }
+            | Self::LaunchApplication {
                 protocol_version, ..
             } => *protocol_version,
         }
@@ -176,6 +198,33 @@ mod tests {
 
         let json = serde_json::to_string(&response).unwrap();
 
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+    }
+
+    #[test]
+    fn round_trips_launch_request() {
+        let request = Request::LaunchApplication {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 12,
+            desktop_id: "velora-test.desktop".to_owned(),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+    }
+
+    #[test]
+    fn round_trips_correlated_launch_rejection() {
+        let response = Response::LaunchRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 13,
+            desktop_id: "missing.desktop".to_owned(),
+            code: "unknown_application".to_owned(),
+            message: "application is not present in the registry".to_owned(),
+            retryable: false,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
         assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
     }
 }

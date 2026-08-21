@@ -6,6 +6,10 @@ signal state_changed(state: ConnectionState)
 signal latency_changed(milliseconds: int)
 signal applications_changed(applications: Array)
 signal application_state_changed(desktop_id: String, running: bool)
+signal launch_finished(desktop_id: String, process_id: int)
+signal launch_rejected(desktop_id: String, code: String, message: String, retryable: bool)
+signal launch_status_changed(desktop_id: String, stage: String, message: String, retryable: bool)
+signal ux_status_changed(stage: String, message: String, tone: String, transient_seconds: float)
 
 enum ConnectionState {
 	DISCONNECTED,
@@ -22,6 +26,7 @@ const CLIENT_VERSION := "0.2.0"
 const PING_INTERVAL_SECONDS := 5.0
 const PONG_TIMEOUT_SECONDS := 3.0
 const APPLICATION_PAGE_SIZE := 32
+const LAUNCH_TIMEOUT_SECONDS := 5.0
 const RECONNECT_DELAYS := [0.25, 0.5, 1.0, 2.0, 4.0]
 
 @export var auto_connect := true
@@ -43,6 +48,9 @@ var _waiting_for_pong := false
 var _next_request_id := 1
 var _ping_started_msec := 0
 var _application_request_id := 0
+var _launch_request_id := 0
+var _launch_desktop_id := ""
+var _launch_elapsed := 0.0
 var _application_offset := 0
 var _application_total := 0
 var _pending_applications: Array[Dictionary] = []
@@ -76,6 +84,7 @@ func _process(delta: float) -> void:
 		if _reconnect_remaining <= 0.0:
 			_attempt_connect()
 	elif state == ConnectionState.READY:
+		_update_launch_timeout(delta)
 		_update_heartbeat(delta)
 
 func connect_to_core() -> void:
@@ -91,6 +100,7 @@ func disconnect_from_core() -> void:
 	_waiting_for_pong = false
 	_pending_applications.clear()
 	_application_request_id = 0
+	_fail_pending_launch("connection_lost", true)
 	_set_state(ConnectionState.DISCONNECTED, "CORE // DISCONNECTED")
 
 func request_ping() -> bool:
@@ -111,15 +121,35 @@ func request_applications() -> bool:
 		return false
 	_pending_applications.clear()
 	_application_total = 0
+	_emit_ux_status("loading_applications", "LOADING APPLICATIONS", "waiting", -1.0)
 	return _request_application_page(0)
 
 func launch_app(desktop_id: String) -> bool:
 	last_requested_desktop_id = desktop_id
 	if state != ConnectionState.READY:
 		connection_changed.emit("CORE // OFFLINE // IPC NOT READY")
-	else:
-		connection_changed.emit("CORE // LAUNCH DISABLED // POLICY REQUIRED")
-	return false
+		_emit_launch_failure(desktop_id, "core_offline", "CORE OFFLINE", true)
+		return false
+	if _launch_request_id != 0:
+		_emit_launch_failure(desktop_id, "launch_busy", "LAUNCH ALREADY IN PROGRESS", true)
+		return false
+	var request_id := _take_request_id()
+	_launch_request_id = request_id
+	_launch_desktop_id = desktop_id
+	_launch_elapsed = 0.0
+	var sent := _send_message({
+		"type": "launch_application",
+		"protocol_version": PROTOCOL_VERSION,
+		"request_id": request_id,
+		"desktop_id": desktop_id,
+	})
+	if not sent:
+		_fail_pending_launch("send_failed", true)
+		return false
+	var label := _application_label(desktop_id)
+	launch_status_changed.emit(desktop_id, "launching_application", "LAUNCHING " + label, false)
+	_emit_ux_status("launching_application", "LAUNCHING // " + label, "waiting", 0.0)
+	return true
 
 func _attempt_connect() -> void:
 	if not _bridge or _socket_path.is_empty():
@@ -145,16 +175,19 @@ func _on_socket_disconnected(_reason: String) -> void:
 	welcome_received = false
 	_waiting_for_pong = false
 	_application_request_id = 0
+	_fail_pending_launch("connection_lost", true)
 	if state != ConnectionState.INCOMPATIBLE and state != ConnectionState.DISCONNECTED:
 		_schedule_reconnect()
 
 func _on_transport_error(code: String, _message: String) -> void:
 	connection_changed.emit("CORE // TRANSPORT ERROR // " + code.to_upper())
+	_emit_ux_status("launch_failed", "TRANSPORT ERROR", "failure", 3.0)
 
 func _on_line_received(payload: String) -> void:
 	var message = JSON.parse_string(payload)
 	if not message is Dictionary:
 		connection_changed.emit("CORE // INVALID RESPONSE")
+		_emit_ux_status("launch_failed", "INVALID CORE RESPONSE", "failure", 3.0)
 		return
 	if int(message.get("protocol_version", -1)) != PROTOCOL_VERSION:
 		_mark_incompatible()
@@ -178,11 +211,42 @@ func _on_line_received(payload: String) -> void:
 				latency_changed.emit(Time.get_ticks_msec() - _ping_started_msec)
 		"applications":
 			_on_applications_page(message)
+		"launch_accepted":
+			var request_id := int(message.get("request_id", 0))
+			if request_id != _launch_request_id:
+				connection_changed.emit("CORE // STALE LAUNCH RESPONSE")
+				return
+			var desktop_id := String(message.get("desktop_id", ""))
+			var process_id := int(message.get("process_id", 0))
+			if desktop_id != _launch_desktop_id or process_id <= 0:
+				_fail_pending_launch("invalid_launch_response", true)
+				return
+			_clear_launch_request()
+			launch_finished.emit(desktop_id, process_id)
+			var label := _application_label(desktop_id)
+			launch_status_changed.emit(
+				desktop_id,
+				"launch_successful",
+				"LAUNCHED " + label,
+				false
+			)
+			_emit_ux_status("launch_successful", "LAUNCHED // " + label, "ready", 3.0)
+			connection_changed.emit("CORE // LAUNCHED // %s // PID %d" % [desktop_id, process_id])
+		"launch_rejected":
+			_on_launch_rejected(message)
 		"error":
 			if String(message.get("code", "")) == "protocol_mismatch":
 				_mark_incompatible()
 			else:
-				connection_changed.emit("CORE // " + String(message.get("code", "ERROR")).to_upper())
+				var code := String(message.get("code", "error"))
+				var retryable := bool(message.get("retryable", false))
+				connection_changed.emit("CORE // " + code.to_upper())
+				_emit_ux_status(
+					"launch_failed",
+					_friendly_error(code),
+					"failure",
+					3.0 if retryable else -1.0
+				)
 		_:
 			connection_changed.emit("CORE // UNKNOWN RESPONSE")
 
@@ -197,6 +261,13 @@ func _update_heartbeat(delta: float) -> void:
 	if _heartbeat_elapsed >= PING_INTERVAL_SECONDS:
 		_heartbeat_elapsed = 0.0
 		request_ping()
+
+func _update_launch_timeout(delta: float) -> void:
+	if _launch_request_id == 0:
+		return
+	_launch_elapsed += delta
+	if _launch_elapsed >= LAUNCH_TIMEOUT_SECONDS:
+		_fail_pending_launch("launch_timeout", true)
 
 func _schedule_reconnect() -> void:
 	if state == ConnectionState.RECONNECTING:
@@ -270,6 +341,82 @@ func _on_applications_page(message: Dictionary) -> void:
 	_application_request_id = 0
 	applications_changed.emit(applications.duplicate(true))
 	connection_changed.emit("CORE // %d APPLICATIONS" % applications.size())
+	_emit_ux_status("ready", "READY // %d APPLICATIONS" % applications.size(), "ready", -1.0)
+
+func _on_launch_rejected(message: Dictionary) -> void:
+	var request_id := int(message.get("request_id", 0))
+	if request_id != _launch_request_id:
+		connection_changed.emit("CORE // STALE LAUNCH REJECTION")
+		return
+	var desktop_id := String(message.get("desktop_id", ""))
+	if desktop_id != _launch_desktop_id:
+		_fail_pending_launch("invalid_launch_response", true)
+		return
+	var code := String(message.get("code", "launch_failed"))
+	var retryable := bool(message.get("retryable", false))
+	_clear_launch_request()
+	_emit_launch_failure(desktop_id, code, _friendly_error(code), retryable)
+
+func _emit_launch_failure(
+	desktop_id: String,
+	code: String,
+	message: String,
+	retryable: bool
+) -> void:
+	launch_rejected.emit(desktop_id, code, message, retryable)
+	launch_status_changed.emit(desktop_id, "launch_failed", message, retryable)
+	_emit_ux_status("launch_failed", message, "failure", 3.0)
+
+func _fail_pending_launch(code: String, retryable: bool) -> void:
+	if _launch_request_id == 0:
+		return
+	var desktop_id := _launch_desktop_id
+	_clear_launch_request()
+	_emit_launch_failure(desktop_id, code, _friendly_error(code), retryable)
+
+func _clear_launch_request() -> void:
+	_launch_request_id = 0
+	_launch_desktop_id = ""
+	_launch_elapsed = 0.0
+
+func _friendly_error(code: String) -> String:
+	match code:
+		"unknown_application":
+			return "APPLICATION NOT FOUND"
+		"terminal_required":
+			return "TERMINAL POLICY REQUIRED"
+		"malformed_desktop_entry":
+			return "INVALID APPLICATION ENTRY"
+		"unsupported_exec_field":
+			return "FILE OR URL LAUNCH NOT SUPPORTED"
+		"shell_wrapper_rejected":
+			return "BLOCKED BY SAFETY POLICY"
+		"executable_unavailable":
+			return "EXECUTABLE UNAVAILABLE"
+		"launch_rate_limited":
+			return "PLEASE WAIT AND RETRY"
+		"launch_process_limit":
+			return "TOO MANY APPLICATIONS"
+		"connection_lost":
+			return "CONNECTION LOST // RETRY"
+		"core_offline":
+			return "CORE OFFLINE"
+		"send_failed":
+			return "REQUEST FAILED // RETRY"
+		"launch_timeout":
+			return "LAUNCH TIMED OUT // RETRY"
+		"launch_busy":
+			return "LAUNCH ALREADY IN PROGRESS"
+		"invalid_launch_response":
+			return "INVALID LAUNCH RESPONSE"
+		_:
+			return "LAUNCH FAILED"
+
+func _application_label(desktop_id: String) -> String:
+	for application in applications:
+		if String(application.get("id", "")) == desktop_id:
+			return String(application.get("name", desktop_id)).to_upper()
+	return desktop_id.trim_suffix(".desktop").to_upper()
 
 func _normalize_application(value: Variant) -> Dictionary:
 	if not value is Dictionary:
@@ -324,3 +471,22 @@ func _set_state(next_state: ConnectionState, message: String) -> void:
 	state = next_state
 	state_changed.emit(state)
 	connection_changed.emit(message)
+	match state:
+		ConnectionState.DISCONNECTED:
+			_emit_ux_status("core_offline", "CORE OFFLINE", "failure", -1.0)
+		ConnectionState.CONNECTING, ConnectionState.HANDSHAKING:
+			_emit_ux_status("connecting", "CONNECTING", "waiting", -1.0)
+		ConnectionState.READY:
+			_emit_ux_status("connected", "CONNECTED", "ready", -1.0)
+		ConnectionState.RECONNECTING:
+			_emit_ux_status("reconnecting", "RECONNECTING", "waiting", -1.0)
+		ConnectionState.INCOMPATIBLE:
+			_emit_ux_status("protocol_incompatible", "PROTOCOL INCOMPATIBLE", "failure", -1.0)
+
+func _emit_ux_status(
+	stage: String,
+	message: String,
+	tone: String,
+	transient_seconds: float
+) -> void:
+	ux_status_changed.emit(stage, message, tone, transient_seconds)

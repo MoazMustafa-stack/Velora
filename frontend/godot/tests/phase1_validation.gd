@@ -92,7 +92,7 @@ func _run() -> void:
 	_check(workstation.interaction_prompt() == "[E] USE  VS CODE", "P1.05 exposes a clear interaction prompt")
 	player._unhandled_input(_action_event("interact"))
 	await process_frame
-	_check(workstation.status == "attention", "P1.05 E/Enter interaction reaches the target")
+	_check(backend.last_requested_desktop_id == "code.desktop", "P1.05 E/Enter interaction reaches the target")
 
 	player.position = Vector2(80, 130)
 	player._unhandled_input(_action_event("menu"))
@@ -137,7 +137,7 @@ func _run() -> void:
 		actions_have_keys = actions_have_keys and has_key
 	_check(actions_have_keys, "P1.09 every required action has a keyboard binding")
 	_check(Input.mouse_mode != Input.MOUSE_MODE_CAPTURED, "P1.09 never captures the mouse")
-	_check(not main.menu_open and player.input_enabled and workstation.status == "attention", "P1.09 keyboard-only flow completes movement, menu, and interaction")
+	_check(not main.menu_open and player.input_enabled and backend.last_requested_desktop_id == "code.desktop", "P1.09 keyboard-only flow completes movement, menu, and interaction")
 
 	if failures.is_empty():
 		print("Phase 1.01-1.09 validation passed.")
