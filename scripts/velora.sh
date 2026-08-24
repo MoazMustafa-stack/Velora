@@ -12,6 +12,7 @@ Velora development runner
 Usage: ./scripts/velora.sh [command]
 
 Commands:
+  dev           Build, start Core, wait for its socket, then launch Godot
   run           Build the bridge and launch the pixel hub (default)
   edit          Build the bridge and open the Godot editor
   core          Run the Rust core daemon
@@ -34,6 +35,9 @@ require_command() {
 command_name="${1:-run}"
 
 case "$command_name" in
+  dev)
+    exec "$script_dir/dev.sh"
+    ;;
   run)
     require_command godot
     "$script_dir/build-bridge.sh"
@@ -56,6 +60,7 @@ case "$command_name" in
   check|test)
     "$script_dir/check-godot.sh"
     "$script_dir/check.sh"
+    "$script_dir/check-dev.sh"
     ;;
   perf|performance)
     "$script_dir/build-bridge.sh"
@@ -64,6 +69,7 @@ case "$command_name" in
   all)
     "$script_dir/check-godot.sh"
     "$script_dir/check.sh"
+    "$script_dir/check-dev.sh"
     "$script_dir/check-ipc.sh"
     "$script_dir/check-performance.sh"
     ;;

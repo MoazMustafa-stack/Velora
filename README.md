@@ -36,12 +36,22 @@ Phase 2 provides a native Rust GDExtension that carries protocol v2 messages
 over a user-only Unix socket. The frontend performs a hello/welcome handshake,
 heartbeat, and reconnect without blocking the Godot main thread. Core discovers
 and parses XDG desktop entries, then sends the filtered application registry to
-Godot in bounded pages. Real application launching remains disabled until its
-separate safety-reviewed change.
+Godot in bounded pages. Application launches are requested by desktop ID only;
+Core re-parses the registered desktop entry and applies its safety policy before
+it can create a process.
 
 ## Run
 
-Start the core and frontend in separate terminals:
+For normal development, start the complete system with one command:
+
+```bash
+./scripts/velora.sh dev
+```
+
+It builds the native bridge and Core, waits for Core's socket, launches Godot,
+and stops only that Core child when Godot exits or you press Ctrl+C.
+
+You can still start the core and frontend in separate terminals:
 
 ```bash
 ./scripts/velora.sh core
@@ -54,6 +64,7 @@ integer nearest-neighbour scaling. Install Godot 4.7 and Rust first if needed.
 The unified development runner exposes the common workflows:
 
 ```bash
+./scripts/velora.sh dev           # supervised Core + Godot lifecycle
 ./scripts/velora.sh edit          # build the bridge and open Godot
 ./scripts/velora.sh build-bridge  # compile the Rust GDExtension
 ./scripts/velora.sh ipc-check     # live core ↔ Godot handshake test
@@ -77,9 +88,9 @@ The unified development runner exposes the common workflows:
 ./scripts/velora.sh perf
 ```
 
-The IPC check builds the ignored native library, starts the core with an isolated
+The IPC check builds the ignored native library, starts Core with an isolated
 desktop-entry fixture and temporary socket, then validates handshake, ping/pong,
-reconnect, and application-registry transfer from headless Godot.
+application-registry transfer, a real Core shutdown, and frontend reconnection.
 The performance check opens a rendered window and validates the integrated-GPU
 baseline.
 
