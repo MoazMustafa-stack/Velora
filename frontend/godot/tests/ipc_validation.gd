@@ -1,15 +1,9 @@
 extends SceneTree
 
 var failures: Array[String] = []
-var launch_desktop_id := ""
-var launch_process_id := 0
 var rejected_desktop_id := ""
 var rejection_code := ""
 var rejection_retryable := true
-
-func _on_launch_finished(desktop_id: String, process_id: int) -> void:
-	launch_desktop_id = desktop_id
-	launch_process_id = process_id
 
 func _on_launch_rejected(desktop_id: String, code: String, _message: String, retryable: bool) -> void:
 	rejected_desktop_id = desktop_id
@@ -34,11 +28,22 @@ func _wait_until(predicate: Callable, timeout_seconds: float) -> bool:
 		await process_frame
 	return false
 
+func _write_marker(name: String) -> void:
+	var test_dir := OS.get_environment("VELORA_IPC_TEST_DIR")
+	if test_dir.is_empty():
+		failures.append("VELORA_IPC_TEST_DIR is required")
+		return
+	var marker := FileAccess.open(test_dir.path_join(name), FileAccess.WRITE)
+	if marker == null:
+		failures.append("cannot write integration marker: " + name)
+		return
+	marker.store_line("ready")
+	marker.close()
+
 func _run() -> void:
 	_check(ClassDB.class_exists("VeloraSocketBridge"), "P2.03 native bridge is registered")
 	var backend := BackendClient.new()
 	root.add_child(backend)
-	backend.launch_finished.connect(_on_launch_finished)
 	backend.launch_rejected.connect(_on_launch_rejected)
 	var ready := await _wait_until(func(): return backend.state == BackendClient.ConnectionState.READY, 5.0)
 	_check(ready, "P2.04 client completes hello/welcome handshake")
@@ -54,12 +59,11 @@ func _run() -> void:
 		_check(not application.is_empty(), "P2.07 registry contains the requested desktop ID")
 		_check(application.get("id") == "velora-test.desktop", "P2.07 preserves the desktop ID")
 		_check(application.get("name") == "Velora Test Application", "P2.07 preserves the display name")
-		_check(application.get("exec") == "/usr/bin/true %F", "P2.07 keeps Exec opaque")
+		_check(
+			application.get("exec") == "/usr/bin/velora-test-never-launch %F",
+			"P2.07 keeps Exec opaque"
+		)
 		_check(application.get("categories") == ["Utility", "Test"], "P2.07 preserves categories")
-		_check(backend.launch_app("velora-test.desktop"), "P2.06 sends a launch request for a registered application")
-		var launch_ready := await _wait_until(func(): return launch_process_id > 0, 3.0)
-		_check(launch_ready, "P2.06 Core accepts a safe application launch")
-		_check(launch_desktop_id == "velora-test.desktop", "P2.06 launch response preserves the desktop ID")
 		_check(backend.launch_app("missing.desktop"), "P2.09 sends a launch request for rejection feedback")
 		var rejection_ready := await _wait_until(func(): return not rejection_code.is_empty(), 3.0)
 		_check(rejection_ready, "P2.09 Core returns a correlated launch rejection")
@@ -70,28 +74,30 @@ func _run() -> void:
 	var pong := await _wait_until(func(): return backend.last_pong_request_id > 0, 3.0)
 	_check(pong, "P2.04 core returns the matching pong")
 
-	# Feed the client the same event the native bridge emits after a broken
-	# socket. The retry must replace the old worker, reconnect, and handshake.
-	backend._on_socket_disconnected("validation disconnect")
-	_check(
-		backend.state == BackendClient.ConnectionState.RECONNECTING,
-		"P2.05 unexpected disconnect enters reconnect backoff"
+	# The shell harness stops Core only after this marker appears. From here on,
+	# every transition is produced by the real native socket worker.
+	_write_marker("frontend-ready")
+	var reconnecting := await _wait_until(
+		func(): return backend.state == BackendClient.ConnectionState.RECONNECTING,
+		5.0
 	)
+	_check(reconnecting, "P2.10 stopping Core enters reconnect backoff")
+	_write_marker("frontend-reconnecting")
 	var reconnected := await _wait_until(
 		func(): return backend.state == BackendClient.ConnectionState.READY,
-		3.0
+		10.0
 	)
-	_check(reconnected, "P2.05 client reconnects and handshakes again")
-	_check(backend.connected and backend.welcome_received, "P2.05 reconnected client is ready")
+	_check(reconnected, "P2.10 client reconnects after Core restarts")
+	_check(backend.connected and backend.welcome_received, "P2.10 restarted handshake is ready")
 	var registry_reloaded := await _wait_until(func(): return backend.applications.size() == 35, 3.0)
-	_check(registry_reloaded, "P2.07 registry reloads after reconnect")
+	_check(registry_reloaded, "P2.10 registry reloads after a real Core restart")
 
 	backend.disconnect_from_core()
 	await process_frame
 	_check(backend.state == BackendClient.ConnectionState.DISCONNECTED, "P2.04 explicit disconnect is clean")
 
 	if failures.is_empty():
-		print("Phase 2 application IPC validation passed.")
+		print("P2.10 live restart and IPC validation passed.")
 		quit(0)
 	else:
 		push_error("PR 4 IPC validation failed: %s" % [failures])

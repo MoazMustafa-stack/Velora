@@ -214,6 +214,33 @@ mod tests {
     }
 
     #[test]
+    fn round_trips_application_list_request() {
+        let request = Request::ListApplications {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 11,
+            offset: 32,
+            limit: MAX_APPLICATION_PAGE_SIZE,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+        assert_eq!(request.protocol_version(), PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn round_trips_correlated_launch_acceptance() {
+        let response = Response::LaunchAccepted {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 14,
+            desktop_id: "editor.desktop".to_owned(),
+            process_id: 4242,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+    }
+
+    #[test]
     fn round_trips_correlated_launch_rejection() {
         let response = Response::LaunchRejected {
             protocol_version: PROTOCOL_VERSION,

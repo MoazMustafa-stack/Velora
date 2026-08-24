@@ -1,7 +1,12 @@
-use crate::{config::CoreConfig, launch::LaunchService};
+use crate::{
+    config::CoreConfig,
+    launch::{ApplicationLauncher, LaunchService},
+};
 use anyhow::{Context, Result, bail};
 use std::{
-    fs, io,
+    fs,
+    future::Future,
+    io,
     os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::Arc,
@@ -18,11 +23,29 @@ use velora_protocol::{
     PROTOCOL_VERSION, Request, Response, SERVER_NAME,
 };
 
-pub async fn serve(
+pub(crate) async fn serve(
     config: CoreConfig,
     applications: Arc<[Application]>,
     launcher: Arc<LaunchService>,
 ) -> Result<()> {
+    serve_until(config, applications, launcher, async {
+        tokio::signal::ctrl_c()
+            .await
+            .context("failed to listen for shutdown signal")
+    })
+    .await
+}
+
+async fn serve_until<L, F>(
+    config: CoreConfig,
+    applications: Arc<[Application]>,
+    launcher: Arc<L>,
+    shutdown: F,
+) -> Result<()>
+where
+    L: ApplicationLauncher + 'static,
+    F: Future<Output = Result<()>> + Send,
+{
     prepare_socket_path(&config.socket_path).await?;
     let listener = UnixListener::bind(&config.socket_path)
         .with_context(|| format!("cannot bind {}", config.socket_path.display()))?;
@@ -30,6 +53,7 @@ pub async fn serve(
         .with_context(|| format!("cannot secure {}", config.socket_path.display()))?;
     let _socket_guard = SocketGuard::new(config.socket_path.clone())?;
     info!(socket = %config.socket_path.display(), "socket ready");
+    tokio::pin!(shutdown);
 
     loop {
         tokio::select! {
@@ -45,8 +69,8 @@ pub async fn serve(
                 }
                 Err(error) => warn!(%error, "failed to accept frontend connection"),
             },
-            signal = tokio::signal::ctrl_c() => {
-                signal.context("failed to listen for shutdown signal")?;
+            signal = &mut shutdown => {
+                signal?;
                 info!("Velora Core shutting down");
                 break;
             }
@@ -85,11 +109,14 @@ async fn prepare_socket_path(path: &Path) -> Result<()> {
     }
 }
 
-async fn handle_connection(
+async fn handle_connection<L>(
     stream: UnixStream,
     applications: Arc<[Application]>,
-    launcher: Arc<LaunchService>,
-) -> Result<()> {
+    launcher: Arc<L>,
+) -> Result<()>
+where
+    L: ApplicationLauncher + 'static,
+{
     info!("frontend connected");
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -429,9 +456,91 @@ impl Drop for SocketGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{os::unix::fs::symlink, os::unix::net::UnixListener as StdUnixListener};
+    use crate::launch::LaunchError;
+    use std::{
+        future::ready, os::unix::fs::symlink, os::unix::net::UnixListener as StdUnixListener,
+        sync::Mutex,
+    };
     use tempfile::tempdir;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    use tokio::sync::oneshot;
+
+    #[derive(Clone, Copy)]
+    enum MockLaunchOutcome {
+        Accepted(u32),
+        UnknownApplication,
+        RateLimited,
+    }
+
+    struct MockLauncher {
+        outcome: MockLaunchOutcome,
+        requests: Mutex<Vec<String>>,
+    }
+
+    impl MockLauncher {
+        fn new(outcome: MockLaunchOutcome) -> Self {
+            Self {
+                outcome,
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    impl ApplicationLauncher for MockLauncher {
+        fn launch<'a>(
+            &'a self,
+            desktop_id: &'a str,
+        ) -> impl Future<Output = Result<u32, LaunchError>> + Send + 'a {
+            self.requests.lock().unwrap().push(desktop_id.to_owned());
+            ready(match self.outcome {
+                MockLaunchOutcome::Accepted(process_id) => Ok(process_id),
+                MockLaunchOutcome::UnknownApplication => Err(LaunchError::UnknownApplication),
+                MockLaunchOutcome::RateLimited => Err(LaunchError::RateLimited),
+            })
+        }
+    }
+
+    async fn send_request(reader: &mut BufReader<UnixStream>, request: &Request) -> Response {
+        let request = serde_json::to_string(request).unwrap();
+        reader
+            .get_mut()
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        serde_json::from_str(line.trim()).unwrap()
+    }
+
+    async fn connect_and_handshake(path: &Path) -> BufReader<UnixStream> {
+        let stream = UnixStream::connect(path).await.unwrap();
+        let mut reader = BufReader::new(stream);
+        let response = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.2.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(response, Response::Welcome { .. }));
+        reader
+    }
+
+    async fn wait_for_socket(path: &Path) {
+        timeout(Duration::from_secs(2), async {
+            while !path.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("server did not create its socket");
+    }
 
     #[tokio::test]
     async fn refuses_to_remove_regular_file() {
@@ -540,6 +649,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn malformed_messages_are_reported_and_do_not_crash_the_connection() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+        ));
+        let hello = serde_json::to_string(&Request::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_name: "test-client".to_owned(),
+            client_version: "0.2.0".to_owned(),
+        })
+        .unwrap();
+        client
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+
+        reader.get_mut().write_all(b"{not-json}\n").await.unwrap();
+        line.clear();
+        reader.read_line(&mut line).await.unwrap();
+        assert!(matches!(
+            serde_json::from_str::<Response>(line.trim()).unwrap(),
+            Response::Error { code, retryable: false, .. } if code == "invalid_request"
+        ));
+
+        let response = send_request(
+            &mut reader,
+            &Request::Ping {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 91,
+            },
+        )
+        .await;
+        assert_eq!(
+            response,
+            Response::Pong {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 91,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn oversized_messages_are_rejected_and_close_the_connection() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+        ));
+        let mut oversized = vec![b'x'; MAX_MESSAGE_BYTES + 1];
+        oversized.push(b'\n');
+        client.write_all(&oversized).await.unwrap();
+
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Response>(line.trim()).unwrap(),
+            Response::error("message_too_large", "message exceeds 64 KiB", false)
+        );
+        line.clear();
+        assert_eq!(reader.read_line(&mut line).await.unwrap(), 0);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_is_rejected_without_panicking() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+        ));
+        client.write_all(&[0xff, b'\n']).await.unwrap();
+
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Response>(line.trim()).unwrap(),
+            Response::error(
+                "invalid_encoding",
+                "message must be UTF-8 and newline terminated",
+                false,
+            )
+        );
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn returns_application_registry_in_pages() {
         let applications: Arc<[Application]> = Arc::from(
             (1..=3)
@@ -609,10 +816,11 @@ mod tests {
     #[tokio::test]
     async fn correlates_launch_rejections_with_the_request() {
         let (server, mut client) = UnixStream::pair().unwrap();
+        let launcher = Arc::new(MockLauncher::new(MockLaunchOutcome::UnknownApplication));
         let server_task = tokio::spawn(handle_connection(
             server,
             Arc::from([]),
-            Arc::new(LaunchService::empty()),
+            Arc::clone(&launcher),
         ));
 
         let hello = serde_json::to_string(&Request::Hello {
@@ -654,9 +862,189 @@ mod tests {
                 retryable: false,
             }
         );
+        assert_eq!(launcher.requests(), ["missing.desktop"]);
 
         drop(reader);
         server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn accepts_launches_through_the_mock_launcher_without_spawning() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let launcher = Arc::new(MockLauncher::new(MockLaunchOutcome::Accepted(4242)));
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            Arc::from([]),
+            Arc::clone(&launcher),
+        ));
+
+        let hello = serde_json::to_string(&Request::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_name: "test-client".to_owned(),
+            client_version: "0.2.0".to_owned(),
+        })
+        .unwrap();
+        client
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+
+        let response = send_request(
+            &mut reader,
+            &Request::LaunchApplication {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 81,
+                desktop_id: "mock.desktop".to_owned(),
+            },
+        )
+        .await;
+
+        assert_eq!(
+            response,
+            Response::LaunchAccepted {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 81,
+                desktop_id: "mock.desktop".to_owned(),
+                process_id: 4242,
+            }
+        );
+        assert_eq!(launcher.requests(), ["mock.desktop"]);
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn marks_transient_mock_launch_failures_as_retryable() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let launcher = Arc::new(MockLauncher::new(MockLaunchOutcome::RateLimited));
+        let server_task = tokio::spawn(handle_connection(server, Arc::from([]), launcher));
+
+        let hello = serde_json::to_string(&Request::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_name: "test-client".to_owned(),
+            client_version: "0.2.0".to_owned(),
+        })
+        .unwrap();
+        client
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+
+        let response = send_request(
+            &mut reader,
+            &Request::LaunchApplication {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 82,
+                desktop_id: "busy.desktop".to_owned(),
+            },
+        )
+        .await;
+
+        assert!(matches!(
+            response,
+            Response::LaunchRejected {
+                request_id: 82,
+                code,
+                retryable: true,
+                ..
+            } if code == "launch_rate_limited"
+        ));
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn temporary_server_socket_is_cleaned_and_can_be_restarted() {
+        let directory = tempdir().unwrap();
+        let socket_path = directory.path().join("velora.sock");
+        let applications: Arc<[Application]> = Arc::from([Application {
+            id: "mock.desktop".to_owned(),
+            name: "Mock Application".to_owned(),
+            exec: "/not/launched".to_owned(),
+            icon: None,
+            categories: vec!["Test".to_owned()],
+            terminal: false,
+        }]);
+
+        for generation in 1..=2 {
+            let config = CoreConfig {
+                socket_path: socket_path.clone(),
+            };
+            let launcher = Arc::new(MockLauncher::new(MockLaunchOutcome::Accepted(
+                5000 + generation,
+            )));
+            let (shutdown_tx, shutdown_rx) = oneshot::channel();
+            let server_task = tokio::spawn(serve_until(
+                config,
+                Arc::clone(&applications),
+                Arc::clone(&launcher),
+                async move {
+                    shutdown_rx.await.context("test shutdown sender dropped")?;
+                    Ok(())
+                },
+            ));
+
+            wait_for_socket(&socket_path).await;
+            let mut reader = connect_and_handshake(&socket_path).await;
+            assert_eq!(
+                send_request(
+                    &mut reader,
+                    &Request::Ping {
+                        protocol_version: PROTOCOL_VERSION,
+                        request_id: generation.into(),
+                    },
+                )
+                .await,
+                Response::Pong {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: generation.into(),
+                }
+            );
+            assert!(matches!(
+                send_request(
+                    &mut reader,
+                    &Request::ListApplications {
+                        protocol_version: PROTOCOL_VERSION,
+                        request_id: 10 + u64::from(generation),
+                        offset: 0,
+                        limit: 32,
+                    },
+                )
+                .await,
+                Response::Applications {
+                    applications,
+                    total: 1,
+                    ..
+                } if applications[0].id == "mock.desktop"
+            ));
+            assert!(matches!(
+                send_request(
+                    &mut reader,
+                    &Request::LaunchApplication {
+                        protocol_version: PROTOCOL_VERSION,
+                        request_id: 20 + u64::from(generation),
+                        desktop_id: "mock.desktop".to_owned(),
+                    },
+                )
+                .await,
+                Response::LaunchAccepted { process_id, .. }
+                    if process_id == 5000 + generation
+            ));
+            assert_eq!(launcher.requests(), ["mock.desktop"]);
+
+            drop(reader);
+            shutdown_tx.send(()).unwrap();
+            server_task.await.unwrap().unwrap();
+            assert!(!socket_path.exists());
+        }
     }
 
     #[test]

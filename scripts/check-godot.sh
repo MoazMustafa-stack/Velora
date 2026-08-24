@@ -35,3 +35,4 @@ echo "Godot scene validation passed."
 godot --headless --disable-crash-handler --path "$project_dir" --script res://tests/phase1_validation.gd
 godot --headless --disable-crash-handler --path "$project_dir" --script res://tests/station_validation.gd
 godot --headless --disable-crash-handler --path "$project_dir" --script res://tests/launch_ux_validation.gd
+godot --headless --disable-crash-handler --path "$project_dir" --script res://tests/backend_client_validation.gd

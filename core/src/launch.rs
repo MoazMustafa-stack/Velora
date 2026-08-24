@@ -1,6 +1,7 @@
 use freedesktop_desktop_entry::DesktopEntry;
 use std::{
     collections::HashMap,
+    future::Future,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -75,6 +76,13 @@ impl LaunchError {
             Self::RateLimited | Self::ProcessLimitReached | Self::Spawn(_)
         )
     }
+}
+
+pub(crate) trait ApplicationLauncher: Send + Sync {
+    fn launch<'a>(
+        &'a self,
+        desktop_id: &'a str,
+    ) -> impl Future<Output = Result<u32, LaunchError>> + Send + 'a;
 }
 
 #[derive(Clone)]
@@ -213,6 +221,15 @@ impl LaunchService {
     }
 }
 
+impl ApplicationLauncher for LaunchService {
+    fn launch<'a>(
+        &'a self,
+        desktop_id: &'a str,
+    ) -> impl Future<Output = Result<u32, LaunchError>> + Send + 'a {
+        LaunchService::launch(self, desktop_id)
+    }
+}
+
 fn is_shell_wrapper(args: &[String]) -> bool {
     let Some(program) = args.first() else {
         return false;
@@ -274,6 +291,31 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, io};
+    use tempfile::tempdir;
+
+    fn test_application(id: &str, terminal: bool) -> Application {
+        Application {
+            id: id.to_owned(),
+            name: "Test Application".to_owned(),
+            exec: "opaque registry value".to_owned(),
+            icon: None,
+            categories: vec!["Test".to_owned()],
+            terminal,
+        }
+    }
+
+    fn service_for_entry(
+        application: Application,
+        desktop_entry: &str,
+    ) -> (tempfile::TempDir, LaunchService) {
+        let directory = tempdir().unwrap();
+        let desktop_file = directory.path().join(&application.id);
+        fs::write(&desktop_file, desktop_entry).unwrap();
+        let launch_paths = HashMap::from([(application.id.clone(), desktop_file)]);
+        let service = LaunchService::new(&[application], launch_paths);
+        (directory, service)
+    }
 
     #[test]
     fn allows_standalone_file_and_uri_placeholders_without_a_payload() {
@@ -293,5 +335,76 @@ mod tests {
                 "accepted {exec}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn rejects_ids_that_are_not_in_the_registry() {
+        let error = LaunchService::empty()
+            .launch("missing.desktop")
+            .await
+            .unwrap_err();
+        assert!(matches!(error, LaunchError::UnknownApplication));
+        assert_eq!(error.code(), "unknown_application");
+        assert!(!error.retryable());
+    }
+
+    #[tokio::test]
+    async fn rejects_terminal_applications_before_process_creation() {
+        let application = test_application("terminal.desktop", true);
+        let (_directory, service) = service_for_entry(
+            application,
+            "[Desktop Entry]\nType=Application\nName=Terminal\nExec=/bin/echo safe\n",
+        );
+
+        let error = service.launch("terminal.desktop").await.unwrap_err();
+        assert!(matches!(error, LaunchError::TerminalRequired));
+    }
+
+    #[tokio::test]
+    async fn rejects_shell_wrappers_before_process_creation() {
+        let application = test_application("unsafe.desktop", false);
+        let (_directory, service) = service_for_entry(
+            application,
+            "[Desktop Entry]\nType=Application\nName=Unsafe\nExec=/bin/sh -c echo\n",
+        );
+
+        let error = service.launch("unsafe.desktop").await.unwrap_err();
+        assert!(matches!(error, LaunchError::ShellWrapperRejected));
+        assert_eq!(error.code(), "shell_wrapper_rejected");
+    }
+
+    #[tokio::test]
+    async fn rejects_unavailable_executables_before_process_creation() {
+        let application = test_application("unavailable.desktop", false);
+        let (_directory, service) = service_for_entry(
+            application,
+            "[Desktop Entry]\nType=Application\nName=Unavailable\nExec=/velora/not/a/real/program\n",
+        );
+
+        let error = service.launch("unavailable.desktop").await.unwrap_err();
+        assert!(matches!(error, LaunchError::ExecutableUnavailable(_)));
+        assert!(!error.retryable());
+    }
+
+    #[tokio::test]
+    async fn hidden_entries_are_not_launchable_even_if_registered() {
+        let application = test_application("hidden.desktop", false);
+        let (_directory, service) = service_for_entry(
+            application,
+            "[Desktop Entry]\nType=Application\nName=Hidden\nHidden=true\nExec=/bin/echo safe\n",
+        );
+
+        let error = service.launch("hidden.desktop").await.unwrap_err();
+        assert!(matches!(error, LaunchError::UnknownApplication));
+    }
+
+    #[test]
+    fn only_transient_launch_failures_are_retryable() {
+        assert!(LaunchError::RateLimited.retryable());
+        assert!(LaunchError::ProcessLimitReached.retryable());
+        assert!(LaunchError::Spawn(io::Error::other("test failure")).retryable());
+        assert!(!LaunchError::UnknownApplication.retryable());
+        assert!(!LaunchError::TerminalRequired.retryable());
+        assert!(!LaunchError::ShellWrapperRejected.retryable());
     }
 }
