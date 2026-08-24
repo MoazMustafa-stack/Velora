@@ -3,7 +3,11 @@ use std::{
     io::{ErrorKind, Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
-    sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
+    },
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -76,19 +80,22 @@ impl VeloraSocketBridge {
     fn connect_socket(&mut self, path: GString) {
         self.stop_worker();
         let path = PathBuf::from(path.to_string());
-        // Commands are unbounded so shutdown can always be queued. The payload
-        // size is bounded separately, and Godot only sends tiny protocol frames.
-        let (command_sender, command_receiver) = mpsc::channel();
+        // Both directions are bounded. Shutdown uses a separate atomic flag so
+        // it cannot be stranded behind queued frontend messages.
+        let (command_sender, command_receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
         let (event_sender, event_receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::clone(&shutdown);
         let join_handle = thread::Builder::new()
             .name("velora-socket".to_owned())
-            .spawn(move || run_worker(path, command_receiver, event_sender));
+            .spawn(move || run_worker(path, command_receiver, event_sender, worker_shutdown));
 
         match join_handle {
             Ok(join_handle) => {
                 self.worker = Some(Worker {
                     command_sender,
                     event_receiver,
+                    shutdown,
                     join_handle: Some(join_handle),
                 });
             }
@@ -116,10 +123,14 @@ impl VeloraSocketBridge {
         };
         match worker
             .command_sender
-            .send(WorkerCommand::Send(payload.to_string()))
+            .try_send(WorkerCommand::Send(payload.to_string()))
         {
             Ok(()) => true,
-            Err(_) => false,
+            Err(TrySendError::Full(_)) => {
+                self.emit_transport_error("queue_full", "outbound IPC queue is full");
+                false
+            }
+            Err(TrySendError::Disconnected(_)) => false,
         }
     }
 
@@ -178,7 +189,7 @@ impl VeloraSocketBridge {
         let Some(mut worker) = self.worker.take() else {
             return;
         };
-        let _ = worker.command_sender.send(WorkerCommand::Shutdown);
+        worker.shutdown.store(true, Ordering::Release);
         if let Some(join_handle) = worker.join_handle.take() {
             let _ = join_handle.join();
         }
@@ -187,8 +198,9 @@ impl VeloraSocketBridge {
 }
 
 struct Worker {
-    command_sender: Sender<WorkerCommand>,
+    command_sender: SyncSender<WorkerCommand>,
     event_receiver: Receiver<WorkerEvent>,
+    shutdown: Arc<AtomicBool>,
     join_handle: Option<JoinHandle<()>>,
 }
 
@@ -200,7 +212,6 @@ impl Drop for VeloraSocketBridge {
 
 enum WorkerCommand {
     Send(String),
-    Shutdown,
 }
 
 enum WorkerEvent {
@@ -214,6 +225,7 @@ fn run_worker(
     path: PathBuf,
     command_receiver: Receiver<WorkerCommand>,
     event_sender: SyncSender<WorkerEvent>,
+    shutdown: Arc<AtomicBool>,
 ) {
     let mut stream = match UnixStream::connect(&path) {
         Ok(stream) => stream,
@@ -240,6 +252,9 @@ fn run_worker(
     let mut read_buffer = [0_u8; 4096];
 
     loop {
+        if shutdown.load(Ordering::Acquire) {
+            return;
+        }
         loop {
             match command_receiver.try_recv() {
                 Ok(WorkerCommand::Send(payload)) => {
@@ -254,7 +269,7 @@ fn run_worker(
                         return;
                     }
                 }
-                Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => return,
+                Err(TryRecvError::Disconnected) => return,
                 Err(TryRecvError::Empty) => break,
             }
         }

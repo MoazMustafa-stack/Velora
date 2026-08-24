@@ -15,23 +15,30 @@ mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR
 chmod 700 "$XDG_RUNTIME_DIR"
 
 project_dir="$(cd "$script_dir/../frontend/godot" && pwd)"
-godot_log="$velora_check_dir/godot.log"
+run_godot() {
+  local name="$1"
+  shift
+  local godot_log="$velora_check_dir/$name.log"
 
-set +e
-godot --headless --disable-crash-handler --path "$project_dir" --quit-after 5 2>&1 | tee "$godot_log"
-godot_status=${PIPESTATUS[0]}
-set -e
+  set +e
+  godot --headless --disable-crash-handler --path "$project_dir" "$@" 2>&1 | tee "$godot_log"
+  local godot_status=${PIPESTATUS[0]}
+  set -e
 
-if (( godot_status != 0 )); then
-  exit "$godot_status"
-fi
+  if (( godot_status != 0 )); then
+    echo "Godot $name validation exited with status $godot_status." >&2
+    return "$godot_status"
+  fi
+  if rg -q 'SCRIPT ERROR|Parse Error|Compile Error|Failed to load script|Failed loading resource' "$godot_log"; then
+    echo "Godot $name validation reported a script or resource error." >&2
+    return 1
+  fi
+}
 
-if rg -q 'SCRIPT ERROR|Parse Error|Compile Error|Failed to load script|Failed loading resource' "$godot_log"; then
-  echo "Godot script or resource validation failed." >&2
-  exit 1
-fi
+run_godot scene --quit-after 5
 
 echo "Godot scene validation passed."
-godot --headless --disable-crash-handler --path "$project_dir" --script res://tests/phase1_validation.gd
-godot --headless --disable-crash-handler --path "$project_dir" --script res://tests/station_validation.gd
-godot --headless --disable-crash-handler --path "$project_dir" --script res://tests/launch_ux_validation.gd
+run_godot phase1 --script res://tests/phase1_validation.gd
+run_godot stations --script res://tests/station_validation.gd
+run_godot launch-ux --script res://tests/launch_ux_validation.gd
+run_godot backend-client --script res://tests/backend_client_validation.gd

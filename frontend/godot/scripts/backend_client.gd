@@ -31,6 +31,10 @@ const RECONNECT_DELAYS := [0.25, 0.5, 1.0, 2.0, 4.0]
 
 @export var auto_connect := true
 
+# Tests may provide a bridge with the same signal/method surface as the native
+# GDExtension. Production leaves this null and instantiates VeloraSocketBridge.
+var bridge_override: Node
+
 var connected := false
 var state := ConnectionState.DISCONNECTED
 var last_requested_desktop_id := ""
@@ -56,11 +60,14 @@ var _application_total := 0
 var _pending_applications: Array[Dictionary] = []
 
 func _ready() -> void:
-	_bridge = ClassDB.instantiate("VeloraSocketBridge") as Node
+	_bridge = bridge_override
+	if _bridge == null:
+		_bridge = ClassDB.instantiate("VeloraSocketBridge") as Node
 	if _bridge == null:
 		_set_state(ConnectionState.DISCONNECTED, "CORE // BRIDGE NOT BUILT")
 		return
-	add_child(_bridge)
+	if _bridge.get_parent() == null:
+		add_child(_bridge)
 	_bridge.socket_connected.connect(_on_socket_connected)
 	_bridge.socket_disconnected.connect(_on_socket_disconnected)
 	_bridge.line_received.connect(_on_line_received)
@@ -122,7 +129,10 @@ func request_applications() -> bool:
 	_pending_applications.clear()
 	_application_total = 0
 	_emit_ux_status("loading_applications", "LOADING APPLICATIONS", "waiting", -1.0)
-	return _request_application_page(0)
+	var sent := _request_application_page(0)
+	if not sent:
+		_fail_registry("CORE // APPLICATION REQUEST FAILED", "APPLICATION REQUEST FAILED")
+	return sent
 
 func launch_app(desktop_id: String) -> bool:
 	last_requested_desktop_id = desktop_id
@@ -302,23 +312,24 @@ func _on_applications_page(message: Dictionary) -> void:
 		return
 	if int(message.get("request_id", 0)) != _application_request_id:
 		connection_changed.emit("CORE // STALE APPLICATION PAGE")
+		_emit_ux_status("registry_failed", "STALE APPLICATION DATA", "failure", 3.0)
 		return
 
 	var raw_applications = message.get("applications", null)
 	if not raw_applications is Array:
-		connection_changed.emit("CORE // INVALID APPLICATION PAGE")
+		_fail_registry("CORE // INVALID APPLICATION PAGE", "INVALID APPLICATION DATA")
 		return
 
 	var total := int(message.get("total", -1))
 	if total < 0 or (_application_offset > 0 and total != _application_total):
-		connection_changed.emit("CORE // INVALID APPLICATION COUNT")
+		_fail_registry("CORE // INVALID APPLICATION COUNT", "INVALID APPLICATION DATA")
 		return
 	_application_total = total
 
 	for value in raw_applications:
 		var application := _normalize_application(value)
 		if application.is_empty():
-			connection_changed.emit("CORE // INVALID APPLICATION")
+			_fail_registry("CORE // INVALID APPLICATION", "INVALID APPLICATION DATA")
 			return
 		_pending_applications.append(application)
 
@@ -326,13 +337,14 @@ func _on_applications_page(message: Dictionary) -> void:
 	if next_offset != null:
 		var next_value := int(next_offset)
 		if next_value <= _application_offset or next_value > total:
-			connection_changed.emit("CORE // INVALID APPLICATION CURSOR")
+			_fail_registry("CORE // INVALID APPLICATION CURSOR", "INVALID APPLICATION DATA")
 			return
-		_request_application_page(next_value)
+		if not _request_application_page(next_value):
+			_fail_registry("CORE // APPLICATION REQUEST FAILED", "APPLICATION REQUEST FAILED")
 		return
 
 	if _pending_applications.size() != total:
-		connection_changed.emit("CORE // INCOMPLETE APPLICATION REGISTRY")
+		_fail_registry("CORE // INCOMPLETE APPLICATION REGISTRY", "INCOMPLETE APPLICATION DATA")
 		return
 
 	applications.clear()
@@ -342,6 +354,14 @@ func _on_applications_page(message: Dictionary) -> void:
 	applications_changed.emit(applications.duplicate(true))
 	connection_changed.emit("CORE // %d APPLICATIONS" % applications.size())
 	_emit_ux_status("ready", "READY // %d APPLICATIONS" % applications.size(), "ready", -1.0)
+
+func _fail_registry(detail: String, concise_message: String) -> void:
+	_pending_applications.clear()
+	_application_request_id = 0
+	_application_offset = 0
+	_application_total = 0
+	connection_changed.emit(detail)
+	_emit_ux_status("registry_failed", concise_message, "failure", 3.0)
 
 func _on_launch_rejected(message: Dictionary) -> void:
 	var request_id := int(message.get("request_id", 0))
