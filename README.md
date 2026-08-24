@@ -69,6 +69,7 @@ The unified development runner exposes the common workflows:
 ./scripts/velora.sh build-bridge  # compile the Rust GDExtension
 ./scripts/velora.sh ipc-check     # live core ↔ Godot handshake test
 ./scripts/velora.sh check         # Godot acceptance tests + Rust workspace
+./scripts/velora.sh gate          # deterministic Phase 2 security/release checks
 ./scripts/velora.sh perf          # rendered integrated-GPU benchmark
 ./scripts/velora.sh all           # all automated and rendered checks
 ```
@@ -85,6 +86,7 @@ The unified development runner exposes the common workflows:
 ```bash
 ./scripts/velora.sh check
 ./scripts/velora.sh ipc-check
+./scripts/velora.sh gate
 ./scripts/velora.sh perf
 ```
 

@@ -993,6 +993,13 @@ mod tests {
             ));
 
             wait_for_socket(&socket_path).await;
+            let metadata = fs::metadata(&socket_path).unwrap();
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                metadata.uid(),
+                fs::metadata(directory.path()).unwrap().uid(),
+                "the socket belongs to the current temporary runtime owner"
+            );
             let mut reader = connect_and_handshake(&socket_path).await;
             assert_eq!(
                 send_request(
@@ -1087,5 +1094,43 @@ mod tests {
         }];
 
         assert!(application_page(&applications, 1, 0, 1).is_err());
+    }
+
+    #[test]
+    fn paginates_a_500_entry_registry_with_bounded_frames() {
+        let applications = (0..500)
+            .map(|number| Application {
+                id: format!("scale-{number}.desktop"),
+                name: format!("Scale Application {number}"),
+                exec: format!("/not/launched/scale-{number}"),
+                icon: None,
+                categories: vec!["Test".to_owned()],
+                terminal: false,
+            })
+            .collect::<Vec<_>>();
+        let mut offset = 0_u32;
+        let mut received = 0_usize;
+
+        loop {
+            let response =
+                application_page(&applications, 700, offset, MAX_APPLICATION_PAGE_SIZE).unwrap();
+            assert!(serde_json::to_vec(&response).unwrap().len() <= MAX_MESSAGE_BYTES);
+            let Response::Applications {
+                applications,
+                next_offset,
+                ..
+            } = response
+            else {
+                unreachable!()
+            };
+            received += applications.len();
+            let Some(next_offset) = next_offset else {
+                break;
+            };
+            assert!(next_offset > offset);
+            offset = next_offset;
+        }
+
+        assert_eq!(received, 500);
     }
 }
