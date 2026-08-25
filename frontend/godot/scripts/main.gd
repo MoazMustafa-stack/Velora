@@ -1,5 +1,7 @@
 extends Node2D
 
+const SessionBinding = preload("res://scripts/session_binding.gd")
+
 @onready var player: CharacterBody2D = $World/Player
 @onready var backend: Node = $BackendClient
 @onready var hud: CanvasLayer = $HUD
@@ -44,9 +46,29 @@ func _on_map_closed() -> void:
 
 func _on_session_snapshot_changed(snapshot: Dictionary) -> void:
 	workspace_map.update_session(snapshot)
+	_refresh_station_running_states(snapshot)
 
 func _on_session_availability_changed(availability: String) -> void:
 	workspace_map.set_availability(availability)
+	if availability != "available":
+		_refresh_station_running_states({})
+
+func _refresh_station_running_states(snapshot: Dictionary) -> void:
+	var availability: String = backend.session_availability if not snapshot.is_empty() else "unavailable"
+	for station in get_tree().get_nodes_in_group("application_stations"):
+		if not station.has_method("apply_running_state"):
+			continue
+		var state: Dictionary = SessionBinding.station_running_state(
+			station.desktop_id,
+			snapshot,
+			availability,
+			station.application
+		)
+		station.apply_running_state(
+			String(state["state"]),
+			String(state["location"]),
+			int(state["windows"])
+		)
 
 func _on_station_status_changed(message: String, tone: String) -> void:
 	hud.show_transient(message, tone, 3.0)

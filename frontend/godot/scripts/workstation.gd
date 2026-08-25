@@ -15,6 +15,10 @@ var status := "offline"
 var application: Dictionary = {}
 var registry_checked := false
 var retry_available := false
+# One of SessionBinding.STATE_*: unknown, not_running, running.
+var running_state := "unknown"
+var running_location := ""
+var running_window_count := 0
 
 func _ready() -> void:
 	_refresh_sprite()
@@ -22,9 +26,24 @@ func _ready() -> void:
 func interaction_prompt() -> String:
 	if registry_checked and application.is_empty():
 		return "[E] MISSING  " + display_name.to_upper()
+	var running_suffix := ""
+	match running_state:
+		"running":
+			running_suffix = " // RUNNING"
+			if not running_location.is_empty():
+				running_suffix += " WS" + running_location
+			if running_window_count > 1:
+				running_suffix += " x%d" % running_window_count
+		"not_running":
+			running_suffix = " // IDLE"
 	if retry_available:
-		return "[E] RETRY  " + application_label().to_upper()
-	return "[E] USE  " + application_label().to_upper()
+		return "[E] RETRY  " + application_label().to_upper() + running_suffix
+	return "[E] USE  " + application_label().to_upper() + running_suffix
+
+func apply_running_state(state: String, location := "", window_count := 0) -> void:
+	running_state = state
+	running_location = location
+	running_window_count = window_count
 
 func interact() -> void:
 	if not registry_checked:
