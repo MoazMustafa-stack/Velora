@@ -3,6 +3,7 @@
 //! publishes nothing unless the content actually changed.
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -14,7 +15,7 @@ use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 use velora_protocol::WorkspaceSnapshot;
 
-use crate::{hyprland::read_session_snapshot, hyprland_events};
+use crate::{hyprland::read_session, hyprland_events};
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct StoreHealth {
@@ -29,6 +30,9 @@ pub(crate) struct SessionStore {
     command_socket: PathBuf,
     sequence: AtomicU64,
     snapshot: Mutex<Option<Arc<WorkspaceSnapshot>>>,
+    // Core-private handle -> compositor address mapping for focus requests.
+    // Never serialized to any frontend.
+    window_addresses: Mutex<HashMap<String, String>>,
     health: Mutex<StoreHealth>,
 }
 
@@ -38,6 +42,7 @@ impl SessionStore {
             command_socket,
             sequence: AtomicU64::new(0),
             snapshot: Mutex::new(None),
+            window_addresses: Mutex::new(HashMap::new()),
             health: Mutex::new(StoreHealth::default()),
         }
     }
@@ -46,8 +51,9 @@ impl SessionStore {
     /// content keeps the existing sequence so clients see no change.
     pub(crate) async fn refresh(&self) -> Result<(), crate::hyprland::AdapterError> {
         let next_sequence = self.sequence.load(Ordering::SeqCst) + 1;
-        match read_session_snapshot(&self.command_socket, next_sequence).await {
-            Ok(fresh) => {
+        match read_session(&self.command_socket, next_sequence).await {
+            Ok(reading) => {
+                let fresh = reading.snapshot;
                 let mut stored = self.snapshot.lock().unwrap();
                 let changed = stored
                     .as_ref()
@@ -55,6 +61,7 @@ impl SessionStore {
                 if changed {
                     self.sequence.store(next_sequence, Ordering::SeqCst);
                     *stored = Some(Arc::new(fresh));
+                    *self.window_addresses.lock().unwrap() = reading.window_addresses;
                     debug!(sequence = next_sequence, "published new session snapshot");
                 } else {
                     debug!(sequence = next_sequence - 1, "session content unchanged");
@@ -79,6 +86,16 @@ impl SessionStore {
 
     pub(crate) fn current(&self) -> Option<Arc<WorkspaceSnapshot>> {
         self.snapshot.lock().unwrap().clone()
+    }
+
+    pub(crate) fn command_socket(&self) -> PathBuf {
+        self.command_socket.clone()
+    }
+
+    /// Resolve a previously issued opaque handle to its compositor address.
+    /// Returns None for unknown or stale handles; callers must fail closed.
+    pub(crate) fn resolve_window_address(&self, handle: &str) -> Option<String> {
+        self.window_addresses.lock().unwrap().get(handle).cloned()
     }
 
     // Consumed by diagnostics/UX from P3.06 onward.

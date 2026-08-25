@@ -214,6 +214,22 @@ pub(crate) async fn read_session_snapshot(
     command_socket: &Path,
     sequence: u64,
 ) -> Result<WorkspaceSnapshot, AdapterError> {
+    Ok(read_session(command_socket, sequence).await?.snapshot)
+}
+
+/// Full session reading including Core-private data. `window_addresses`
+/// maps opaque handles back to compositor addresses so Core can resolve
+/// focus requests; this mapping never leaves Core.
+#[derive(Debug)]
+pub(crate) struct SessionReading {
+    pub snapshot: WorkspaceSnapshot,
+    pub window_addresses: HashMap<String, String>,
+}
+
+pub(crate) async fn read_session(
+    command_socket: &Path,
+    sequence: u64,
+) -> Result<SessionReading, AdapterError> {
     let raw_workspaces = query_json(command_socket, WORKSPACES_REQUEST)
         .await
         .map_err(AdapterError::Query)?;
@@ -227,7 +243,7 @@ pub(crate) async fn read_session_snapshot(
         .await
         .map_err(AdapterError::Query)?;
 
-    normalize_session_snapshot(
+    normalize_session(
         sequence,
         &raw_workspaces,
         &raw_windows,
@@ -236,13 +252,13 @@ pub(crate) async fn read_session_snapshot(
     )
 }
 
-fn normalize_session_snapshot(
+fn normalize_session(
     sequence: u64,
     raw_workspaces: &serde_json::Value,
     raw_windows: &serde_json::Value,
     raw_active_workspace: &serde_json::Value,
     raw_active_window: &serde_json::Value,
-) -> Result<WorkspaceSnapshot, AdapterError> {
+) -> Result<SessionReading, AdapterError> {
     let mut workspaces = parse_workspaces(raw_workspaces)?;
     if workspaces.len() > MAX_WORKSPACES {
         return Err(AdapterError::TooManyWorkspaces);
@@ -255,11 +271,13 @@ fn normalize_session_snapshot(
 
     clients.retain(|client| workspaces.contains_key(&client.window.workspace_handle));
     let mut windows: Vec<Window> = Vec::with_capacity(clients.len());
+    let mut window_addresses: HashMap<String, String> = HashMap::with_capacity(clients.len());
     let mut urgent_workspaces: HashMap<String, ()> = HashMap::new();
     for client in clients {
         if client.is_urgent {
             urgent_workspaces.insert(client.window.workspace_handle.clone(), ());
         }
+        window_addresses.insert(client.window.handle.clone(), client.address);
         windows.push(client.window);
     }
     recompute_workspace_state(&mut workspaces, &windows);
@@ -294,7 +312,10 @@ fn normalize_session_snapshot(
             "normalized session failed validation",
         ))
     })?;
-    Ok(snapshot)
+    Ok(SessionReading {
+        snapshot,
+        window_addresses,
+    })
 }
 
 fn parse_workspaces(raw: &serde_json::Value) -> Result<HashMap<String, Workspace>, AdapterError> {
@@ -359,6 +380,7 @@ fn parse_clients(raw: &serde_json::Value) -> Result<Vec<ParsedClient>, AdapterEr
 
 struct ParsedClient {
     window: Window,
+    address: String,
     is_urgent: bool,
 }
 
@@ -378,6 +400,7 @@ fn parse_client(raw: &serde_json::Value) -> Option<ParsedClient> {
         .and_then(|id| id.as_i64())?;
 
     Some(ParsedClient {
+        address: address.to_owned(),
         window: Window {
             handle: opaque_window_handle(address),
             workspace_handle: format!("workspace:{workspace_id}"),
@@ -464,6 +487,31 @@ pub(crate) async fn switch_to_workspace_id(
     let mut command = Vec::with_capacity(WORKSPACE_DISPATCH_LIMIT);
     command.extend_from_slice(b"dispatch workspace ");
     command.extend_from_slice(id.to_string().as_bytes());
+    dispatch_command(command_socket, &command).await
+}
+
+/// Focus one window by its compositor address. The address never originates
+/// from the frontend: it is resolved from Core's private handle mapping and
+/// re-validated here before it may reach a dispatcher command.
+pub(crate) async fn focus_window_by_address(
+    command_socket: &Path,
+    address: &str,
+) -> Result<(), io::Error> {
+    let valid_address = {
+        let bytes = address.as_bytes();
+        bytes.len() > 2
+            && bytes.starts_with(b"0x")
+            && bytes[2..].iter().all(|byte| byte.is_ascii_hexdigit())
+    };
+    if !valid_address {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "compositor window address failed validation",
+        ));
+    }
+    let mut command = Vec::with_capacity(WORKSPACE_DISPATCH_LIMIT + address.len());
+    command.extend_from_slice(b"dispatch focuswindow address:");
+    command.extend_from_slice(address.as_bytes());
     dispatch_command(command_socket, &command).await
 }
 
@@ -669,7 +717,7 @@ mod tests {
     }
 
     fn normalized_fixture_snapshot() -> WorkspaceSnapshot {
-        normalize_session_snapshot(
+        normalize_session(
             5,
             &fixture_workspaces(),
             &fixture_windows(),
@@ -677,6 +725,7 @@ mod tests {
             &serde_json::json!({"address": "0x55f0bbbb", "workspace": {"id": 2}}),
         )
         .unwrap()
+        .snapshot
     }
 
     #[test]
@@ -739,7 +788,7 @@ mod tests {
 
     #[test]
     fn tolerates_missing_and_malformed_entries() {
-        let snapshot = normalize_session_snapshot(
+        let snapshot = normalize_session(
             1,
             &serde_json::json!([
                 {"id": 3},
@@ -758,7 +807,8 @@ mod tests {
             &serde_json::json!({}),
             &serde_json::json!({}),
         )
-        .unwrap();
+        .unwrap()
+        .snapshot;
 
         assert_eq!(snapshot.workspaces.len(), 2);
         assert!(
@@ -778,7 +828,7 @@ mod tests {
 
     #[test]
     fn malformed_top_level_responses_are_typed_errors() {
-        let error = normalize_session_snapshot(
+        let error = normalize_session(
             1,
             &serde_json::json!({"unexpected": "shape"}),
             &serde_json::json!([]),
@@ -789,7 +839,7 @@ mod tests {
         assert!(error.to_string().contains("not an array"));
 
         assert!(
-            normalize_session_snapshot(
+            normalize_session(
                 1,
                 &serde_json::json!([]),
                 &serde_json::json!("not an array either"),
@@ -806,7 +856,7 @@ mod tests {
             .map(|id| serde_json::json!({"id": id, "name": id.to_string()}))
             .collect();
         assert!(matches!(
-            normalize_session_snapshot(
+            normalize_session(
                 1,
                 &serde_json::json!(many_workspaces),
                 &serde_json::json!([]),
@@ -829,7 +879,7 @@ mod tests {
             }));
         }
         assert!(matches!(
-            normalize_session_snapshot(
+            normalize_session(
                 1,
                 &serde_json::json!(workspaces),
                 &serde_json::json!(clients),
@@ -872,14 +922,15 @@ mod tests {
 
     #[test]
     fn active_references_outside_the_snapshot_are_dropped() {
-        let snapshot = normalize_session_snapshot(
+        let snapshot = normalize_session(
             1,
             &fixture_workspaces(),
             &fixture_windows(),
             &serde_json::json!({"id": 77, "name": "77"}),
             &serde_json::json!({"address": "0xdeadbeef"}),
         )
-        .unwrap();
+        .unwrap()
+        .snapshot;
 
         assert!(snapshot.active_workspace_handle.is_none());
         assert!(snapshot.active_window_handle.is_none());
@@ -895,7 +946,7 @@ mod tests {
     #[test]
     fn strings_are_trimmed_and_char_bounded() {
         let long_title: String = "🦀".repeat(MAX_WINDOW_TITLE_CHARS + 50);
-        let snapshot = normalize_session_snapshot(
+        let snapshot = normalize_session(
             1,
             &serde_json::json!([{"id": 1, "name": "  padded  "}]),
             &serde_json::json!([{
@@ -908,7 +959,8 @@ mod tests {
             &serde_json::json!({}),
             &serde_json::json!({}),
         )
-        .unwrap();
+        .unwrap()
+        .snapshot;
 
         assert_eq!(snapshot.workspaces[0].name, "padded");
         assert_eq!(

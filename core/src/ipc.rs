@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use velora_protocol::{
     Application, HANDSHAKE_TIMEOUT_SECONDS, HyprlandAvailability, HyprlandCapabilities,
     MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, Request, Response, SERVER_NAME,
-    WorkspaceSnapshotError, WorkspaceSwitchError,
+    WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
 };
 
 use crate::session_store::SessionStore;
@@ -325,6 +325,19 @@ where
                 )
                 .await
             }
+            Ok(Request::FocusWindow {
+                request_id,
+                window_handle,
+                ..
+            }) => {
+                focus_window_response(
+                    request_id,
+                    &window_handle,
+                    &hyprland_capabilities,
+                    session.as_deref(),
+                )
+                .await
+            }
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -448,6 +461,61 @@ async fn switch_workspace_response(
         Err(error) => {
             warn!(%error, "workspace switch rejected by compositor");
             reject(WorkspaceSwitchError::SwitchFailed)
+        }
+    }
+}
+
+/// Fail-closed window focusing: only handles issued by the current snapshot
+/// resolve to a compositor address, and that address is re-validated before
+/// any dispatcher command is constructed.
+async fn focus_window_response(
+    request_id: u64,
+    window_handle: &str,
+    capabilities: &HyprlandCapabilities,
+    session: Option<&SessionStore>,
+) -> Response {
+    let reject = |code| Response::FocusRejected {
+        protocol_version: PROTOCOL_VERSION,
+        request_id,
+        window_handle: window_handle.to_owned(),
+        code,
+    };
+
+    let availability_error = match capabilities.availability {
+        HyprlandAvailability::Available => None,
+        HyprlandAvailability::Unavailable => Some(WindowFocusError::HyprlandUnavailable),
+        HyprlandAvailability::Incompatible => Some(WindowFocusError::HyprlandIncompatible),
+    };
+    if let Some(code) = availability_error {
+        return reject(code);
+    }
+
+    let Some(session) = session else {
+        return reject(WindowFocusError::HyprlandUnavailable);
+    };
+    if session.current().is_none() {
+        let _ = session.refresh().await;
+    }
+
+    let Some(address) = session.resolve_window_address(window_handle) else {
+        return reject(WindowFocusError::UnknownWindowHandle);
+    };
+
+    let command_socket = session.command_socket();
+    match crate::hyprland::focus_window_by_address(&command_socket, &address).await {
+        Ok(()) => {
+            // Focus changed compositor state; refresh so the next snapshot
+            // reflects the new active window instead of trusting the event.
+            let _ = session.refresh().await;
+            Response::FocusAccepted {
+                protocol_version: PROTOCOL_VERSION,
+                request_id,
+                window_handle: window_handle.to_owned(),
+            }
+        }
+        Err(error) => {
+            warn!(%error, "window focus rejected by compositor");
+            reject(WindowFocusError::FocusFailed)
         }
     }
 }
@@ -1555,6 +1623,165 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 request_id: 43,
                 workspace_handle: "workspace:3".to_owned(),
+            }
+        );
+
+        server.join().unwrap();
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn focuses_windows_only_through_resolvable_handles() {
+        use crate::hyprland::{
+            ACTIVE_WINDOW_REQUEST, ACTIVE_WORKSPACE_REQUEST, COMMAND_SOCKET_NAME, WINDOWS_REQUEST,
+            WORKSPACES_REQUEST,
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let command_socket = directory.path().join(COMMAND_SOCKET_NAME);
+        let hyprland_listener = std::os::unix::net::UnixListener::bind(&command_socket).unwrap();
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            // Warm-up snapshot containing one mapped window at 0xaa.
+            for (request, response) in [
+                (WORKSPACES_REQUEST, br#"[{"id":1,"name":"1","monitor":"eDP-1","windows":1}]"#.as_slice()),
+                (WINDOWS_REQUEST, br#"[{"address":"0xaa","mapped":true,"workspace":{"id":1},"title":"Editor","class":"code"}]"#.as_slice()),
+                (ACTIVE_WORKSPACE_REQUEST, br#"{"id":1,"name":"1"}"#.as_slice()),
+                (ACTIVE_WINDOW_REQUEST, br#"{}"#.as_slice()),
+            ] {
+                let (mut stream, _) = hyprland_listener.accept().unwrap();
+                let mut received = [0_u8; 32];
+                let read = stream.read(&mut received).unwrap();
+                assert_eq!(&received[..read], request);
+                stream.write_all(response).unwrap();
+            }
+            // The single focus dispatch, then the post-focus refresh queries.
+            let (mut stream, _) = hyprland_listener.accept().unwrap();
+            let mut command = Vec::new();
+            stream.read_to_end(&mut command).unwrap();
+            assert_eq!(command, b"dispatch focuswindow address:0xaa");
+            stream.write_all(b"ok").unwrap();
+            drop(stream);
+            for (request, response) in [
+                (WORKSPACES_REQUEST, br#"[{"id":1,"name":"1","monitor":"eDP-1","windows":1}]"#.as_slice()),
+                (WINDOWS_REQUEST, br#"[{"address":"0xaa","mapped":true,"workspace":{"id":1},"title":"Editor","class":"code"}]"#.as_slice()),
+                (ACTIVE_WORKSPACE_REQUEST, br#"{"id":1,"name":"1"}"#.as_slice()),
+                (ACTIVE_WINDOW_REQUEST, br#"{"address":"0xaa"}"#.as_slice()),
+            ] {
+                let (mut stream, _) = hyprland_listener.accept().unwrap();
+                let mut received = [0_u8; 32];
+                let read = stream.read(&mut received).unwrap();
+                assert_eq!(&received[..read], request);
+                stream.write_all(response).unwrap();
+            }
+        });
+
+        let store = Arc::new(SessionStore::new(command_socket));
+        let available = HyprlandCapabilities {
+            availability: HyprlandAvailability::Available,
+            ..HyprlandCapabilities::unavailable()
+        };
+        let (server_conn, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_capabilities(
+            server_conn,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            available,
+            Some(Arc::clone(&store)),
+        ));
+
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        // Warm the snapshot so the handle map is populated.
+        assert!(matches!(
+            send_request(
+                &mut reader,
+                &Request::GetWorkspaceSnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 50,
+                },
+            )
+            .await,
+            Response::WorkspaceSnapshot { .. }
+        ));
+
+        // A raw selector string can never be used as a handle.
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::FocusWindow {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 51,
+                    window_handle: "0xaa".to_owned(),
+                },
+            )
+            .await,
+            Response::FocusRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 51,
+                window_handle: "0xaa".to_owned(),
+                code: WindowFocusError::UnknownWindowHandle,
+            }
+        );
+
+        // A stale/closed window handle fails cleanly.
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::FocusWindow {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 52,
+                    window_handle: "window:does-not-exist".to_owned(),
+                },
+            )
+            .await,
+            Response::FocusRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 52,
+                window_handle: "window:does-not-exist".to_owned(),
+                code: WindowFocusError::UnknownWindowHandle,
+            }
+        );
+
+        // The issued handle resolves internally and focuses exactly once.
+        let snapshot_response = send_request(
+            &mut reader,
+            &Request::GetWorkspaceSnapshot {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 53,
+            },
+        )
+        .await;
+        let Response::WorkspaceSnapshot { snapshot, .. } = snapshot_response else {
+            panic!("expected a workspace snapshot");
+        };
+        let editor_handle = String::clone(&snapshot.windows[0].handle);
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::FocusWindow {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 54,
+                    window_handle: editor_handle.clone(),
+                },
+            )
+            .await,
+            Response::FocusAccepted {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 54,
+                window_handle: editor_handle.clone(),
             }
         );
 

@@ -14,6 +14,8 @@ signal session_snapshot_changed(snapshot: Dictionary)
 signal session_availability_changed(availability: String)
 signal switch_accepted(workspace_handle: String)
 signal switch_rejected(workspace_handle: String, code: String, message: String, retryable: bool)
+signal focus_accepted(window_handle: String)
+signal focus_rejected(window_handle: String, code: String, message: String, retryable: bool)
 
 enum ConnectionState {
 	DISCONNECTED,
@@ -35,6 +37,7 @@ const RECONNECT_DELAYS := [0.25, 0.5, 1.0, 2.0, 4.0]
 const MAX_SESSION_WORKSPACES := 128
 const MAX_SESSION_WINDOWS := 1024
 const SWITCH_TIMEOUT_SECONDS := 5.0
+const FOCUS_TIMEOUT_SECONDS := 5.0
 
 @export var auto_connect := true
 
@@ -73,6 +76,9 @@ var _session_request_id := 0
 var _switch_request_id := 0
 var _switch_handle := ""
 var _switch_elapsed := 0.0
+var _focus_request_id := 0
+var _focus_handle := ""
+var _focus_elapsed := 0.0
 
 func _ready() -> void:
 	_bridge = bridge_override
@@ -123,6 +129,10 @@ func disconnect_from_core() -> void:
 	_pending_applications.clear()
 	_application_request_id = 0
 	_session_request_id = 0
+	if _focus_request_id != 0:
+		var pending_focus := _focus_handle
+		_clear_focus_request()
+		_emit_focus_rejection(pending_focus, "connection_lost", "CONNECTION LOST // RETRY", true)
 	if _switch_request_id != 0:
 		var pending_handle := _switch_handle
 		_clear_switch_request()
@@ -208,6 +218,29 @@ func request_switch_workspace(workspace_handle: String) -> bool:
 	_emit_ux_status("switching_workspace", "SWITCHING WORKSPACE", "waiting", 0.0)
 	return true
 
+func request_focus_window(window_handle: String) -> bool:
+	if state != ConnectionState.READY:
+		_emit_focus_rejection(window_handle, "core_offline", "WINDOW FOCUS OFFLINE", true)
+		return false
+	if window_handle.is_empty() or _focus_request_id != 0:
+		_emit_focus_rejection(window_handle, "focus_busy", "FOCUS ALREADY IN PROGRESS", true)
+		return false
+	var request_id := _take_request_id()
+	_focus_request_id = request_id
+	_focus_handle = window_handle
+	_focus_elapsed = 0.0
+	var sent := _send_message({
+		"type": "focus_window",
+		"protocol_version": PROTOCOL_VERSION,
+		"request_id": request_id,
+		"window_handle": window_handle,
+	})
+	if not sent:
+		_clear_focus_request()
+		_emit_focus_rejection(window_handle, "send_failed", "REQUEST FAILED // RETRY", true)
+		return false
+	return true
+
 func launch_app(desktop_id: String) -> bool:
 	last_requested_desktop_id = desktop_id
 	if state != ConnectionState.READY:
@@ -243,6 +276,8 @@ func _attempt_connect() -> void:
 	_waiting_for_pong = false
 	_application_request_id = 0
 	_session_request_id = 0
+	_clear_focus_request()
+	_clear_switch_request()
 	_set_state(ConnectionState.CONNECTING, "CORE // CONNECTING")
 	_bridge.connect_socket(_socket_path)
 
@@ -261,6 +296,10 @@ func _on_socket_disconnected(_reason: String) -> void:
 	_waiting_for_pong = false
 	_application_request_id = 0
 	_session_request_id = 0
+	if _focus_request_id != 0:
+		var pending_focus := _focus_handle
+		_clear_focus_request()
+		_emit_focus_rejection(pending_focus, "connection_lost", "CONNECTION LOST // RETRY", true)
 	if _switch_request_id != 0:
 		var pending_handle := _switch_handle
 		_clear_switch_request()
@@ -323,6 +362,15 @@ func _on_line_received(payload: String) -> void:
 			_emit_ux_status("switch_successful", "WORKSPACE SWITCHED", "ready", 2.0)
 		"switch_rejected":
 			_on_switch_rejected(message)
+		"focus_accepted":
+			var accepted_id := int(message.get("request_id", 0))
+			if accepted_id != _focus_request_id:
+				return
+			var focused := String(message.get("window_handle", ""))
+			_clear_focus_request()
+			focus_accepted.emit(focused)
+		"focus_rejected":
+			_on_focus_rejected(message)
 		"launch_accepted":
 			var request_id := int(message.get("request_id", 0))
 			if request_id != _launch_request_id:
@@ -386,6 +434,12 @@ func _update_launch_timeout(delta: float) -> void:
 			var handle := _switch_handle
 			_clear_switch_request()
 			_emit_switch_rejection(handle, "switch_timeout", "SWITCH TIMED OUT // RETRY", true)
+	if _focus_request_id != 0:
+		_focus_elapsed += delta
+		if _focus_elapsed >= FOCUS_TIMEOUT_SECONDS:
+			var focused := _focus_handle
+			_clear_focus_request()
+			_emit_focus_rejection(focused, "focus_timeout", "FOCUS TIMED OUT // RETRY", true)
 
 func _clear_switch_request() -> void:
 	_switch_request_id = 0
@@ -412,6 +466,39 @@ func _on_switch_rejected(message: Dictionary) -> void:
 			_emit_switch_rejection(handle, code, "SPECIAL WORKSPACES CANNOT SWITCH", false)
 		_:
 			_emit_switch_rejection(handle, code, "SWITCH FAILED // RETRY", true)
+
+func _clear_focus_request() -> void:
+	_focus_request_id = 0
+	_focus_handle = ""
+	_focus_elapsed = 0.0
+
+func _on_focus_rejected(message: Dictionary) -> void:
+	var request_id := int(message.get("request_id", 0))
+	if request_id != _focus_request_id:
+		return
+	var handle := String(message.get("window_handle", ""))
+	var code := String(message.get("code", "focus_failed"))
+	_clear_focus_request()
+	match code:
+		"hyprland_unavailable":
+			_set_session_availability("unavailable")
+			_emit_focus_rejection(handle, code, "NO HYPRLAND SESSION", false)
+		"hyprland_incompatible":
+			_set_session_availability("incompatible")
+			_emit_focus_rejection(handle, code, "SESSION INCOMPATIBLE", false)
+		"unknown_window_handle":
+			_emit_focus_rejection(handle, code, "WINDOW NO LONGER EXISTS", false)
+		_:
+			_emit_focus_rejection(handle, code, "FOCUS FAILED // RETRY", true)
+
+func _emit_focus_rejection(
+	window_handle: String,
+	code: String,
+	message: String,
+	retryable: bool
+) -> void:
+	focus_rejected.emit(window_handle, code, message, retryable)
+	_emit_ux_status("focus_failed", message, "failure", 3.0 if retryable else -1.0)
 
 func _emit_switch_rejection(
 	workspace_handle: String,

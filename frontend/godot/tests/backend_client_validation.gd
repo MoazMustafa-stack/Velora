@@ -387,6 +387,64 @@ func _run() -> void:
 		"P3.09 empty handles are rejected locally without a request"
 	)
 
+	var focus_accepts: Array[String] = []
+	var focus_rejections: Array[String] = []
+	backend.focus_accepted.connect(func(handle: String) -> void:
+		focus_accepts.append(handle)
+	)
+	backend.focus_rejected.connect(func(handle: String, _code: String, _message: String, _retryable: bool) -> void:
+		focus_rejections.append(handle)
+	)
+	_check(
+		backend.request_focus_window("window:abc"),
+		"P3.10 ready client accepts a typed focus request"
+	)
+	var focus_request := _message_at(bridge, bridge.sent_lines.size() - 1)
+	_check(
+		focus_request.get("type") == "focus_window"
+		and focus_request.get("window_handle") == "window:abc"
+		and not focus_request.has("address"),
+		"P3.10 focus requests carry only the opaque snapshot handle"
+	)
+	bridge.line_received.emit(JSON.stringify({
+		"type": "focus_accepted",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": focus_request.get("request_id"),
+		"window_handle": "window:abc",
+	}))
+	_check(
+		focus_accepts == ["window:abc"] and backend._focus_request_id == 0,
+		"P3.10 correlated focus acceptance clears pending state"
+	)
+
+	_check(backend.request_focus_window("window:stale"), "P3.10 a stale-handle retry can be requested")
+	var stale_focus := _message_at(bridge, bridge.sent_lines.size() - 1)
+	bridge.line_received.emit(JSON.stringify({
+		"type": "focus_rejected",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": stale_focus.get("request_id"),
+		"window_handle": "window:stale",
+		"code": "unknown_window_handle",
+	}))
+	_check(
+		focus_rejections == ["window:stale"]
+		and last_ux_message == "WINDOW NO LONGER EXISTS",
+		"P3.10 stale window handles fail with concise recoverable feedback"
+	)
+
+	bridge.socket_disconnected.emit("test disconnect")
+	bridge.socket_connected.emit()
+	bridge.line_received.emit(JSON.stringify({
+		"type": "welcome",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"server_name": "velora-core-test",
+		"server_version": "0.2.0",
+	}))
+	_check(
+		backend.request_focus_window("window:fresh"),
+		"P3.10 reconnect resets pending focus state for new requests"
+	)
+
 	backend.queue_free()
 	await process_frame
 	if failures.is_empty():
