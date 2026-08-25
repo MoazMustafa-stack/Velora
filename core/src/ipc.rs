@@ -19,20 +19,28 @@ use tokio::{
 };
 use tracing::{info, warn};
 use velora_protocol::{
-    Application, HANDSHAKE_TIMEOUT_SECONDS, MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES,
-    PROTOCOL_VERSION, Request, Response, SERVER_NAME,
+    Application, HANDSHAKE_TIMEOUT_SECONDS, HyprlandAvailability, HyprlandCapabilities,
+    MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, Request, Response, SERVER_NAME,
+    WorkspaceSnapshotError,
 };
 
 pub(crate) async fn serve(
     config: CoreConfig,
     applications: Arc<[Application]>,
     launcher: Arc<LaunchService>,
+    hyprland_capabilities: HyprlandCapabilities,
 ) -> Result<()> {
-    serve_until(config, applications, launcher, async {
-        tokio::signal::ctrl_c()
-            .await
-            .context("failed to listen for shutdown signal")
-    })
+    serve_until(
+        config,
+        applications,
+        launcher,
+        hyprland_capabilities,
+        async {
+            tokio::signal::ctrl_c()
+                .await
+                .context("failed to listen for shutdown signal")
+        },
+    )
     .await
 }
 
@@ -40,6 +48,7 @@ async fn serve_until<L, F>(
     config: CoreConfig,
     applications: Arc<[Application]>,
     launcher: Arc<L>,
+    hyprland_capabilities: HyprlandCapabilities,
     shutdown: F,
 ) -> Result<()>
 where
@@ -61,8 +70,16 @@ where
                 Ok((stream, _)) => {
                     let applications = Arc::clone(&applications);
                     let launcher = Arc::clone(&launcher);
+                    let hyprland_capabilities = hyprland_capabilities.clone();
                     tokio::spawn(async move {
-                        if let Err(error) = handle_connection(stream, applications, launcher).await {
+                        if let Err(error) = handle_connection_with_capabilities(
+                            stream,
+                            applications,
+                            launcher,
+                            hyprland_capabilities,
+                        )
+                        .await
+                        {
                             warn!(%error, "frontend connection failed");
                         }
                     });
@@ -109,10 +126,29 @@ async fn prepare_socket_path(path: &Path) -> Result<()> {
     }
 }
 
+#[cfg(test)]
 async fn handle_connection<L>(
     stream: UnixStream,
     applications: Arc<[Application]>,
     launcher: Arc<L>,
+) -> Result<()>
+where
+    L: ApplicationLauncher + 'static,
+{
+    handle_connection_with_capabilities(
+        stream,
+        applications,
+        launcher,
+        HyprlandCapabilities::unavailable(),
+    )
+    .await
+}
+
+async fn handle_connection_with_capabilities<L>(
+    stream: UnixStream,
+    applications: Arc<[Application]>,
+    launcher: Arc<L>,
+    hyprland_capabilities: HyprlandCapabilities,
 ) -> Result<()>
 where
     L: ApplicationLauncher + 'static,
@@ -249,6 +285,16 @@ where
                     retryable: error.retryable(),
                 },
             },
+            Ok(Request::GetHyprlandCapabilities { request_id, .. }) => {
+                Response::HyprlandCapabilities {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    capabilities: hyprland_capabilities.clone(),
+                }
+            }
+            Ok(Request::GetWorkspaceSnapshot { request_id, .. }) => {
+                workspace_snapshot_rejection(request_id, &hyprland_capabilities)
+            }
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -269,6 +315,22 @@ where
     }
     info!("frontend disconnected");
     Ok(())
+}
+
+fn workspace_snapshot_rejection(request_id: u64, capabilities: &HyprlandCapabilities) -> Response {
+    let code = match capabilities.availability {
+        HyprlandAvailability::Unavailable => WorkspaceSnapshotError::HyprlandUnavailable,
+        HyprlandAvailability::Incompatible => WorkspaceSnapshotError::HyprlandIncompatible,
+        HyprlandAvailability::Available => WorkspaceSnapshotError::SnapshotNotReady,
+    };
+    let retryable = !matches!(code, WorkspaceSnapshotError::HyprlandIncompatible);
+
+    Response::WorkspaceSnapshotRejected {
+        protocol_version: PROTOCOL_VERSION,
+        request_id,
+        code,
+        retryable,
+    }
 }
 
 fn application_page(
@@ -986,6 +1048,7 @@ mod tests {
                 config,
                 Arc::clone(&applications),
                 Arc::clone(&launcher),
+                HyprlandCapabilities::unavailable(),
                 async move {
                     shutdown_rx.await.context("test shutdown sender dropped")?;
                     Ok(())
@@ -1052,6 +1115,74 @@ mod tests {
             server_task.await.unwrap().unwrap();
             assert!(!socket_path.exists());
         }
+    }
+
+    #[tokio::test]
+    async fn reports_hyprland_capabilities_and_typed_snapshot_readiness() {
+        let (server, client) = UnixStream::pair().unwrap();
+        let capabilities = HyprlandCapabilities {
+            availability: HyprlandAvailability::Available,
+            version: Some("0.56.2".to_owned()),
+            can_query_workspaces: true,
+            can_query_windows: true,
+            can_query_active_workspace: true,
+            can_query_active_window: true,
+            can_receive_events: true,
+        };
+        let server_task = tokio::spawn(handle_connection_with_capabilities(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            capabilities.clone(),
+        ));
+        let mut reader = BufReader::new(client);
+
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetHyprlandCapabilities {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 91,
+                },
+            )
+            .await,
+            Response::HyprlandCapabilities {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 91,
+                capabilities,
+            }
+        );
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetWorkspaceSnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 92,
+                },
+            )
+            .await,
+            Response::WorkspaceSnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 92,
+                code: WorkspaceSnapshotError::SnapshotNotReady,
+                retryable: true,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
     }
 
     #[test]

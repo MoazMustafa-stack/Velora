@@ -2,13 +2,159 @@ use serde::{Deserialize, Serialize};
 use std::{env, path::PathBuf};
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u8 = 2;
+/// Phase 3 adds the Hyprland capability contract and typed workspace/window
+/// snapshot model. Core and Godot intentionally require an exact match.
+pub const PROTOCOL_VERSION: u8 = 3;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const HANDSHAKE_TIMEOUT_SECONDS: u64 = 5;
 pub const DEFAULT_APPLICATION_PAGE_SIZE: u16 = 32;
 pub const MAX_APPLICATION_PAGE_SIZE: u16 = 64;
+pub const MAX_WORKSPACES: usize = 128;
+pub const MAX_WINDOWS: usize = 1024;
 pub const CLIENT_NAME: &str = "velora-godot";
 pub const SERVER_NAME: &str = "velora-core";
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HyprlandAvailability {
+    Available,
+    Unavailable,
+    Incompatible,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HyprlandCapabilities {
+    pub availability: HyprlandAvailability,
+    pub version: Option<String>,
+    pub can_query_workspaces: bool,
+    pub can_query_windows: bool,
+    pub can_query_active_workspace: bool,
+    pub can_query_active_window: bool,
+    pub can_receive_events: bool,
+}
+
+impl HyprlandCapabilities {
+    pub fn unavailable() -> Self {
+        Self {
+            availability: HyprlandAvailability::Unavailable,
+            version: None,
+            can_query_workspaces: false,
+            can_query_windows: false,
+            can_query_active_workspace: false,
+            can_query_active_window: false,
+            can_receive_events: false,
+        }
+    }
+
+    pub fn incompatible() -> Self {
+        Self {
+            availability: HyprlandAvailability::Incompatible,
+            ..Self::unavailable()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Workspace {
+    /// Opaque, snapshot-issued identifier. Godot must not manufacture this.
+    pub handle: String,
+    pub name: String,
+    pub index: i32,
+    pub monitor: Option<String>,
+    pub window_count: u16,
+    pub is_active: bool,
+    pub is_special: bool,
+    pub is_urgent: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Window {
+    /// Opaque, snapshot-issued identifier. This is never a raw compositor selector.
+    pub handle: String,
+    pub workspace_handle: String,
+    pub title: String,
+    pub class: String,
+    pub is_active: bool,
+    pub is_floating: bool,
+    pub is_fullscreen: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkspaceSnapshot {
+    /// Monotonically increasing within one Core session. Clients ignore older values.
+    pub sequence: u64,
+    pub workspaces: Vec<Workspace>,
+    pub windows: Vec<Window>,
+    pub active_workspace_handle: Option<String>,
+    pub active_window_handle: Option<String>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum SnapshotValidationError {
+    #[error("workspace snapshot contains more than {MAX_WORKSPACES} workspaces")]
+    TooManyWorkspaces,
+    #[error("workspace snapshot contains more than {MAX_WINDOWS} windows")]
+    TooManyWindows,
+    #[error("workspace snapshot contains an empty or duplicate workspace handle")]
+    InvalidWorkspaceHandle,
+    #[error("workspace snapshot contains an empty or duplicate window handle")]
+    InvalidWindowHandle,
+    #[error("window references an unknown workspace handle")]
+    UnknownWindowWorkspace,
+    #[error("active workspace handle is not in the snapshot")]
+    UnknownActiveWorkspace,
+    #[error("active window handle is not in the snapshot")]
+    UnknownActiveWindow,
+}
+
+impl WorkspaceSnapshot {
+    pub fn is_newer_than(&self, sequence: u64) -> bool {
+        self.sequence > sequence
+    }
+
+    pub fn validate(&self) -> Result<(), SnapshotValidationError> {
+        if self.workspaces.len() > MAX_WORKSPACES {
+            return Err(SnapshotValidationError::TooManyWorkspaces);
+        }
+        if self.windows.len() > MAX_WINDOWS {
+            return Err(SnapshotValidationError::TooManyWindows);
+        }
+
+        let mut workspace_handles = std::collections::HashSet::new();
+        for workspace in &self.workspaces {
+            if workspace.handle.is_empty() || !workspace_handles.insert(&workspace.handle) {
+                return Err(SnapshotValidationError::InvalidWorkspaceHandle);
+            }
+        }
+
+        let mut window_handles = std::collections::HashSet::new();
+        for window in &self.windows {
+            if window.handle.is_empty() || !window_handles.insert(&window.handle) {
+                return Err(SnapshotValidationError::InvalidWindowHandle);
+            }
+            if !workspace_handles.contains(&window.workspace_handle) {
+                return Err(SnapshotValidationError::UnknownWindowWorkspace);
+            }
+        }
+
+        if self
+            .active_workspace_handle
+            .as_ref()
+            .is_some_and(|handle| !workspace_handles.contains(handle))
+        {
+            return Err(SnapshotValidationError::UnknownActiveWorkspace);
+        }
+        if self
+            .active_window_handle
+            .as_ref()
+            .is_some_and(|handle| !window_handles.contains(handle))
+        {
+            return Err(SnapshotValidationError::UnknownActiveWindow);
+        }
+
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Application {
@@ -42,6 +188,14 @@ pub enum Request {
         protocol_version: u8,
         request_id: u64,
         desktop_id: String,
+    },
+    GetHyprlandCapabilities {
+        protocol_version: u8,
+        request_id: u64,
+    },
+    GetWorkspaceSnapshot {
+        protocol_version: u8,
+        request_id: u64,
     },
 }
 
@@ -84,6 +238,30 @@ pub enum Response {
         message: String,
         retryable: bool,
     },
+    HyprlandCapabilities {
+        protocol_version: u8,
+        request_id: u64,
+        capabilities: HyprlandCapabilities,
+    },
+    WorkspaceSnapshot {
+        protocol_version: u8,
+        request_id: u64,
+        snapshot: WorkspaceSnapshot,
+    },
+    WorkspaceSnapshotRejected {
+        protocol_version: u8,
+        request_id: u64,
+        code: WorkspaceSnapshotError,
+        retryable: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceSnapshotError {
+    HyprlandUnavailable,
+    HyprlandIncompatible,
+    SnapshotNotReady,
 }
 
 impl Request {
@@ -99,6 +277,12 @@ impl Request {
                 protocol_version, ..
             }
             | Self::LaunchApplication {
+                protocol_version, ..
+            }
+            | Self::GetHyprlandCapabilities {
+                protocol_version, ..
+            }
+            | Self::GetWorkspaceSnapshot {
                 protocol_version, ..
             } => *protocol_version,
         }
@@ -152,7 +336,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            r#"{"type":"hello","protocol_version":2,"client_name":"velora-godot","client_version":"0.2.0"}"#
+            r#"{"type":"hello","protocol_version":3,"client_name":"velora-godot","client_version":"0.2.0"}"#
         );
     }
 
@@ -253,5 +437,72 @@ mod tests {
 
         let json = serde_json::to_string(&response).unwrap();
         assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+    }
+
+    fn test_snapshot() -> WorkspaceSnapshot {
+        WorkspaceSnapshot {
+            sequence: 7,
+            workspaces: vec![Workspace {
+                handle: "workspace:1".to_owned(),
+                name: "1".to_owned(),
+                index: 1,
+                monitor: Some("eDP-1".to_owned()),
+                window_count: 1,
+                is_active: true,
+                is_special: false,
+                is_urgent: false,
+            }],
+            windows: vec![Window {
+                handle: "window:opaque-1".to_owned(),
+                workspace_handle: "workspace:1".to_owned(),
+                title: "Editor".to_owned(),
+                class: "code".to_owned(),
+                is_active: true,
+                is_floating: false,
+                is_fullscreen: false,
+            }],
+            active_workspace_handle: Some("workspace:1".to_owned()),
+            active_window_handle: Some("window:opaque-1".to_owned()),
+        }
+    }
+
+    #[test]
+    fn round_trips_hyprland_capabilities_and_workspace_snapshot() {
+        let capabilities = HyprlandCapabilities {
+            availability: HyprlandAvailability::Available,
+            version: Some("0.56.2".to_owned()),
+            can_query_workspaces: true,
+            can_query_windows: true,
+            can_query_active_workspace: true,
+            can_query_active_window: true,
+            can_receive_events: true,
+        };
+        let response = Response::WorkspaceSnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 99,
+            snapshot: test_snapshot(),
+        };
+
+        let capabilities_json = serde_json::to_string(&capabilities).unwrap();
+        assert_eq!(
+            serde_json::from_str::<HyprlandCapabilities>(&capabilities_json).unwrap(),
+            capabilities
+        );
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+    }
+
+    #[test]
+    fn snapshot_validation_rejects_unknown_handles_and_detects_stale_sequences() {
+        let mut snapshot = test_snapshot();
+        assert!(snapshot.validate().is_ok());
+        assert!(snapshot.is_newer_than(6));
+        assert!(!snapshot.is_newer_than(7));
+
+        snapshot.windows[0].workspace_handle = "workspace:missing".to_owned();
+        assert_eq!(
+            snapshot.validate(),
+            Err(SnapshotValidationError::UnknownWindowWorkspace)
+        );
     }
 }
