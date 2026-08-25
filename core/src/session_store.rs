@@ -105,13 +105,14 @@ impl SessionStore {
     }
 
     /// Consume coalesced invalidation signals forever. Each signal triggers
-    /// at most one refresh; failures back off before the next signal is read.
+    /// refreshes that retry with capped backoff, so one dirty mark always
+    /// converges to a published snapshot even across outages.
     pub(crate) async fn run(
         self: Arc<Self>,
         mut invalidation_rx: mpsc::Receiver<()>,
         mut shutdown: watch::Receiver<bool>,
     ) {
-        loop {
+        'signals: loop {
             tokio::select! {
                 _ = shutdown.changed() => return,
                 signal = invalidation_rx.recv() => {
@@ -121,9 +122,19 @@ impl SessionStore {
                     // Drain any signals that piled up behind this one.
                     while invalidation_rx.try_recv().is_ok() {}
 
-                    if let Err(error) = self.refresh().await {
-                        warn!(%error, "session refresh after events failed");
-                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    let mut backoff = std::time::Duration::from_millis(250);
+                    loop {
+                        match self.refresh().await {
+                            Ok(()) => continue 'signals,
+                            Err(error) => {
+                                warn!(%error, "session refresh after events failed");
+                                tokio::select! {
+                                    _ = shutdown.changed() => return,
+                                    _ = tokio::time::sleep(backoff) => {}
+                                }
+                                backoff = (backoff * 2).min(std::time::Duration::from_secs(4));
+                            }
+                        }
                     }
                 }
             }
@@ -135,6 +146,7 @@ impl SessionStore {
         self: Arc<Self>,
         event_socket: PathBuf,
         shutdown: watch::Receiver<bool>,
+        listener_config: hyprland_events::ListenerConfig,
     ) {
         if let Err(error) = self.refresh().await {
             info!(%error, "initial Hyprland session refresh failed");
@@ -145,7 +157,7 @@ impl SessionStore {
             event_socket,
             invalidation_tx,
             shutdown.clone(),
-            hyprland_events::ListenerConfig::production(),
+            listener_config,
         ));
 
         self.run(invalidation_rx, shutdown).await;

@@ -2,6 +2,8 @@ mod apps;
 mod config;
 mod hyprland;
 mod hyprland_events;
+#[cfg(test)]
+mod hyprland_integration;
 mod ipc;
 mod launch;
 mod session_store;
@@ -72,7 +74,11 @@ fn start_session_store(
     let store = Arc::new(session_store::SessionStore::new(command_socket));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let runner = Arc::clone(&store);
-    tokio::spawn(runner.run_with_event_listener(event_socket, shutdown_rx));
+    tokio::spawn(runner.run_with_event_listener(
+        event_socket,
+        shutdown_rx,
+        hyprland_events::ListenerConfig::production(),
+    ));
     session_shutdown::arm(shutdown_tx);
     Some(store)
 }

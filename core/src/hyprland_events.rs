@@ -89,8 +89,9 @@ pub(crate) async fn run_event_listener(
             Ok(mut stream) => {
                 debug!(socket = %event_socket.display(), "Hyprland event socket connected");
                 backoff = config.initial_backoff;
+                let mut reader = EventLineReader::default();
                 loop {
-                    let read = read_event_line(&mut stream);
+                    let read = reader.next_line(&mut stream);
                     let line = tokio::select! {
                         _ = shutdown.changed() => return,
                         line = read => line,
@@ -133,22 +134,41 @@ fn invalidate(invalidation_tx: &mpsc::Sender<()>) {
     let _ = invalidation_tx.try_send(());
 }
 
-/// Bounded line reader: never buffers more than MAX_EVENT_LINE_BYTES per
-/// event; oversized garbage is skipped until the next newline.
-async fn read_event_line(stream: &mut UnixStream) -> std::io::Result<Option<String>> {
-    let mut carry = Vec::new();
-    let mut chunk = [0_u8; READ_CHUNK_BYTES];
-    loop {
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            return Ok(None);
-        }
-        for byte in &chunk[..read] {
-            if *byte == b'\n' {
-                return Ok(Some(String::from_utf8_lossy(&carry).into_owned()));
+/// Bounded line reader: never buffers more than the cap per event, keeps
+/// unconsumed bytes across reads so multi-line chunks are never lost, and
+/// skips oversized garbage until the next newline.
+#[derive(Default)]
+struct EventLineReader {
+    buffer: Vec<u8>,
+}
+
+impl EventLineReader {
+    const BUFFER_CAP: usize = MAX_EVENT_LINE_BYTES * 2;
+
+    /// Pull one complete line from buffered bytes, if present.
+    fn extract_line(&mut self) -> Option<String> {
+        let newline = self.buffer.iter().position(|&byte| byte == b'\n')?;
+        let line: Vec<u8> = self.buffer.drain(..=newline).collect();
+        Some(String::from_utf8_lossy(&line[..newline]).into_owned())
+    }
+
+    async fn next_line(&mut self, stream: &mut UnixStream) -> std::io::Result<Option<String>> {
+        loop {
+            if let Some(line) = self.extract_line() {
+                return Ok(Some(line));
             }
-            if carry.len() < MAX_EVENT_LINE_BYTES {
-                carry.push(*byte);
+            if self.buffer.len() > Self::BUFFER_CAP {
+                self.buffer.clear();
+            }
+
+            let mut chunk = [0_u8; READ_CHUNK_BYTES];
+            let read = stream.read(&mut chunk).await?;
+            if read == 0 {
+                return Ok(None);
+            }
+            let room = Self::BUFFER_CAP - self.buffer.len().min(Self::BUFFER_CAP);
+            if room > 0 {
+                self.buffer.extend_from_slice(&chunk[..read.min(room)]);
             }
         }
     }
@@ -166,6 +186,8 @@ fn jitter(half_backoff: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{os::unix::net::UnixListener as StdUnixListener, thread};
+    use tempfile::tempdir;
 
     #[test]
     fn parses_every_required_event_kind() {
@@ -388,5 +410,48 @@ mod tests {
                 .unwrap()
                 .unwrap();
         }
+    }
+    #[tokio::test]
+    async fn multi_line_chunks_are_never_lost() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("events.sock");
+        let listener = StdUnixListener::bind(&path).unwrap();
+        std::mem::forget(directory);
+
+        let server = thread::spawn(move || {
+            use std::io::Write;
+            let (mut stream, _) = listener.accept().unwrap();
+            // All three events arrive inside one socket write.
+            stream
+                .write_all(b"workspace>>1\nconfigreloaded>>\nopenwindow>>0xaa,1,c,t\n")
+                .unwrap();
+        });
+
+        let mut stream = UnixStream::connect(&path).await.unwrap();
+        let mut reader = EventLineReader::default();
+        let first = reader.next_line(&mut stream).await.unwrap().unwrap();
+        let second = reader.next_line(&mut stream).await.unwrap().unwrap();
+        let third = reader.next_line(&mut stream).await.unwrap().unwrap();
+        server.join().unwrap();
+
+        assert_eq!(first, "workspace>>1");
+        assert_eq!(second, "configreloaded>>");
+        assert_eq!(third, "openwindow>>0xaa,1,c,t");
+        assert_eq!(
+            parse_event_line(&third),
+            Some(SessionEvent::WindowOpened),
+            "buffered events must survive chunked reads"
+        );
+    }
+
+    #[test]
+    fn buffered_extraction_survives_oversized_garbage() {
+        let mut reader = EventLineReader {
+            buffer: vec![b'x'; EventLineReader::BUFFER_CAP + 500],
+        };
+        assert_eq!(reader.extract_line(), None);
+        reader.buffer.clear();
+        reader.buffer.extend_from_slice(b"workspace>>5\n");
+        assert_eq!(reader.extract_line().as_deref(), Some("workspace>>5"));
     }
 }
