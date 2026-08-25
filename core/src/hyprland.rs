@@ -20,13 +20,14 @@ use velora_protocol::{
 };
 
 pub(crate) const COMMAND_SOCKET_NAME: &str = ".socket.sock";
-pub(crate) const EVENT_SOCKET_NAME: &str = ".socket2.sock";
+const EVENT_SOCKET_NAME: &str = ".socket2.sock";
 pub(crate) const VERSION_REQUEST: &[u8] = b"j/version";
 pub(crate) const WORKSPACES_REQUEST: &[u8] = b"j/workspaces";
 pub(crate) const WINDOWS_REQUEST: &[u8] = b"j/clients";
 pub(crate) const ACTIVE_WORKSPACE_REQUEST: &[u8] = b"j/activeworkspace";
 pub(crate) const ACTIVE_WINDOW_REQUEST: &[u8] = b"j/activewindow";
 const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+const WORKSPACE_DISPATCH_LIMIT: usize = 32;
 const MAX_WORKSPACE_NAME_CHARS: usize = 128;
 const MAX_WINDOW_TITLE_CHARS: usize = 256;
 const MAX_WINDOW_CLASS_CHARS: usize = 128;
@@ -445,6 +446,63 @@ fn invalid_response(reason: &str) -> AdapterError {
         io::ErrorKind::InvalidData,
         reason.to_owned(),
     ))
+}
+
+/// Switch to a plain numeric workspace by id. The id always comes from the
+/// validated snapshot model, never from frontend-supplied strings. Special
+/// workspaces are rejected by the caller before reaching this point.
+pub(crate) async fn switch_to_workspace_id(
+    command_socket: &Path,
+    id: i32,
+) -> Result<(), io::Error> {
+    if !(1..=i32::MAX).contains(&id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "workspace id outside the switchable range",
+        ));
+    }
+    let mut command = Vec::with_capacity(WORKSPACE_DISPATCH_LIMIT);
+    command.extend_from_slice(b"dispatch workspace ");
+    command.extend_from_slice(id.to_string().as_bytes());
+    dispatch_command(command_socket, &command).await
+}
+
+/// Send one documented dispatcher command and require the compositor's `ok`
+/// acknowledgement. This is the only state-changing write in Velora Core.
+async fn dispatch_command(command_socket: &Path, command: &[u8]) -> Result<(), io::Error> {
+    timeout(QUERY_TIMEOUT, async {
+        let mut stream = UnixStream::connect(command_socket).await?;
+        stream.write_all(command).await?;
+        stream.shutdown().await?;
+
+        let mut response = Vec::new();
+        let mut buffer = [0_u8; 256];
+        loop {
+            let read = stream.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            if response.len() + read > MAX_MESSAGE_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "dispatcher reply exceeds the transport limit",
+                ));
+            }
+            response.extend_from_slice(&buffer[..read]);
+        }
+
+        let reply = String::from_utf8_lossy(&response);
+        if reply.trim().eq_ignore_ascii_case("ok") {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("dispatcher rejected the command: {}", reply.trim()),
+            ))
+        }
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "dispatcher command timed out"))?
 }
 
 #[cfg(test)]
@@ -913,5 +971,46 @@ mod tests {
             read_session_snapshot(&missing, 1).await,
             Err(AdapterError::Query(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn workspace_switch_requires_an_ok_reply() {
+        let directory = tempdir().unwrap();
+        let command_path = directory.path().join(COMMAND_SOCKET_NAME);
+        let listener = StdUnixListener::bind(&command_path).unwrap();
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut received = Vec::new();
+            stream.read_to_end(&mut received).unwrap();
+            assert_eq!(received, b"dispatch workspace 3");
+            use std::io::Write;
+            stream.write_all(b"ok").unwrap();
+            drop(stream);
+
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut received = Vec::new();
+            stream.read_to_end(&mut received).unwrap();
+            assert_eq!(received, b"dispatch workspace 4");
+            stream.write_all(b"invalid workspace").unwrap();
+        });
+
+        switch_to_workspace_id(&command_path, 3).await.unwrap();
+        assert!(switch_to_workspace_id(&command_path, 4).await.is_err());
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_switch_rejects_out_of_range_ids_locally() {
+        assert!(
+            switch_to_workspace_id(Path::new("/nonexistent.sock"), 0)
+                .await
+                .is_err()
+        );
+        assert!(
+            switch_to_workspace_id(Path::new("/nonexistent.sock"), -5)
+                .await
+                .is_err()
+        );
     }
 }

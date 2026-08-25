@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use velora_protocol::{
     Application, HANDSHAKE_TIMEOUT_SECONDS, HyprlandAvailability, HyprlandCapabilities,
     MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, Request, Response, SERVER_NAME,
-    WorkspaceSnapshotError,
+    WorkspaceSnapshotError, WorkspaceSwitchError,
 };
 
 use crate::session_store::SessionStore;
@@ -312,6 +312,19 @@ where
                 workspace_snapshot_response(request_id, &hyprland_capabilities, session.as_deref())
                     .await
             }
+            Ok(Request::SwitchWorkspace {
+                request_id,
+                workspace_handle,
+                ..
+            }) => {
+                switch_workspace_response(
+                    request_id,
+                    &workspace_handle,
+                    &hyprland_capabilities,
+                    session.as_deref(),
+                )
+                .await
+            }
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -376,6 +389,66 @@ async fn workspace_snapshot_response(
             snapshot: (*snapshot).clone(),
         },
         None => workspace_snapshot_rejection(request_id, capabilities),
+    }
+}
+
+/// Fail-closed workspace switching: every uncertainty produces a typed
+/// rejection, the handle must exist in the current authoritative snapshot,
+/// and only plain numeric workspaces are switchable.
+async fn switch_workspace_response(
+    request_id: u64,
+    workspace_handle: &str,
+    capabilities: &HyprlandCapabilities,
+    session: Option<&SessionStore>,
+) -> Response {
+    let reject = |code| Response::SwitchRejected {
+        protocol_version: PROTOCOL_VERSION,
+        request_id,
+        workspace_handle: workspace_handle.to_owned(),
+        code,
+    };
+
+    let availability_error = match capabilities.availability {
+        HyprlandAvailability::Available => None,
+        HyprlandAvailability::Unavailable => Some(WorkspaceSwitchError::HyprlandUnavailable),
+        HyprlandAvailability::Incompatible => Some(WorkspaceSwitchError::HyprlandIncompatible),
+    };
+    if let Some(code) = availability_error {
+        return reject(code);
+    }
+
+    let Some(session) = session else {
+        return reject(WorkspaceSwitchError::HyprlandUnavailable);
+    };
+    if session.current().is_none() {
+        let _ = session.refresh().await;
+    }
+    let Some(snapshot) = session.current() else {
+        return reject(WorkspaceSwitchError::UnknownWorkspaceHandle);
+    };
+
+    let Some(workspace) = snapshot
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.handle == workspace_handle)
+    else {
+        return reject(WorkspaceSwitchError::UnknownWorkspaceHandle);
+    };
+    if workspace.is_special || !(1..=i32::MAX).contains(&workspace.index) {
+        return reject(WorkspaceSwitchError::UnsupportedWorkspace);
+    }
+
+    let command_socket = session.command_socket();
+    match crate::hyprland::switch_to_workspace_id(&command_socket, workspace.index).await {
+        Ok(()) => Response::SwitchAccepted {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            workspace_handle: workspace_handle.to_owned(),
+        },
+        Err(error) => {
+            warn!(%error, "workspace switch rejected by compositor");
+            reject(WorkspaceSwitchError::SwitchFailed)
+        }
     }
 }
 
@@ -1359,6 +1432,133 @@ mod tests {
                 retryable: false,
             }
         );
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn switches_workspaces_only_through_snapshot_handles() {
+        use crate::hyprland::{
+            ACTIVE_WINDOW_REQUEST, ACTIVE_WORKSPACE_REQUEST, COMMAND_SOCKET_NAME, WINDOWS_REQUEST,
+            WORKSPACES_REQUEST,
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let command_socket = directory.path().join(COMMAND_SOCKET_NAME);
+        let hyprland_listener = std::os::unix::net::UnixListener::bind(&command_socket).unwrap();
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            // One warm-up snapshot refresh: the four read queries...
+            for (request, response) in [
+                (
+                    WORKSPACES_REQUEST,
+                    br#"[{"id":3,"name":"3","monitor":"eDP-1","windows":0}]"#.as_slice(),
+                ),
+                (WINDOWS_REQUEST, br#"[]"#.as_slice()),
+                (
+                    ACTIVE_WORKSPACE_REQUEST,
+                    br#"{"id":1,"name":"1"}"#.as_slice(),
+                ),
+                (ACTIVE_WINDOW_REQUEST, br#"{}"#.as_slice()),
+            ] {
+                let (mut stream, _) = hyprland_listener.accept().unwrap();
+                let mut received = [0_u8; 32];
+                let read = stream.read(&mut received).unwrap();
+                assert_eq!(&received[..read], request);
+                stream.write_all(response).unwrap();
+            }
+            // ...then the single state-changing dispatch.
+            let (mut stream, _) = hyprland_listener.accept().unwrap();
+            let mut command = Vec::new();
+            stream.read_to_end(&mut command).unwrap();
+            assert_eq!(command, b"dispatch workspace 3");
+            stream.write_all(b"ok").unwrap();
+        });
+
+        let store = Arc::new(SessionStore::new(command_socket));
+        let available = HyprlandCapabilities {
+            availability: HyprlandAvailability::Available,
+            ..HyprlandCapabilities::unavailable()
+        };
+        let (server_conn, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_capabilities(
+            server_conn,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            available,
+            Some(Arc::clone(&store)),
+        ));
+
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        // A handle that was never issued cannot switch anything.
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::SwitchWorkspace {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 41,
+                    workspace_handle: "workspace:77".to_owned(),
+                },
+            )
+            .await,
+            Response::SwitchRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 41,
+                workspace_handle: "workspace:77".to_owned(),
+                code: WorkspaceSwitchError::UnknownWorkspaceHandle,
+            }
+        );
+
+        // A raw compositor selector is structurally invalid here.
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::SwitchWorkspace {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 42,
+                    workspace_handle: "3".to_owned(),
+                },
+            )
+            .await,
+            Response::SwitchRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 42,
+                workspace_handle: "3".to_owned(),
+                code: WorkspaceSwitchError::UnknownWorkspaceHandle,
+            }
+        );
+
+        // The issued snapshot handle switches through exactly one dispatcher
+        // command with a compositor-derived id.
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::SwitchWorkspace {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 43,
+                    workspace_handle: "workspace:3".to_owned(),
+                },
+            )
+            .await,
+            Response::SwitchAccepted {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 43,
+                workspace_handle: "workspace:3".to_owned(),
+            }
+        );
+
+        server.join().unwrap();
         drop(reader);
         server_task.await.unwrap().unwrap();
     }

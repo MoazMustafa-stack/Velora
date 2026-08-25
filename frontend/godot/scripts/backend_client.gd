@@ -12,6 +12,8 @@ signal launch_status_changed(desktop_id: String, stage: String, message: String,
 signal ux_status_changed(stage: String, message: String, tone: String, transient_seconds: float)
 signal session_snapshot_changed(snapshot: Dictionary)
 signal session_availability_changed(availability: String)
+signal switch_accepted(workspace_handle: String)
+signal switch_rejected(workspace_handle: String, code: String, message: String, retryable: bool)
 
 enum ConnectionState {
 	DISCONNECTED,
@@ -32,6 +34,7 @@ const LAUNCH_TIMEOUT_SECONDS := 5.0
 const RECONNECT_DELAYS := [0.25, 0.5, 1.0, 2.0, 4.0]
 const MAX_SESSION_WORKSPACES := 128
 const MAX_SESSION_WINDOWS := 1024
+const SWITCH_TIMEOUT_SECONDS := 5.0
 
 @export var auto_connect := true
 
@@ -67,6 +70,9 @@ var _application_offset := 0
 var _application_total := 0
 var _pending_applications: Array[Dictionary] = []
 var _session_request_id := 0
+var _switch_request_id := 0
+var _switch_handle := ""
+var _switch_elapsed := 0.0
 
 func _ready() -> void:
 	_bridge = bridge_override
@@ -117,6 +123,10 @@ func disconnect_from_core() -> void:
 	_pending_applications.clear()
 	_application_request_id = 0
 	_session_request_id = 0
+	if _switch_request_id != 0:
+		var pending_handle := _switch_handle
+		_clear_switch_request()
+		_emit_switch_rejection(pending_handle, "connection_lost", "CONNECTION LOST // RETRY", true)
 	_fail_pending_launch("connection_lost", true)
 	_set_state(ConnectionState.DISCONNECTED, "CORE // DISCONNECTED")
 
@@ -163,6 +173,40 @@ func request_hyprland_capabilities() -> bool:
 		"protocol_version": PROTOCOL_VERSION,
 		"request_id": _take_request_id(),
 	})
+
+func request_switch_workspace(workspace_handle: String) -> bool:
+	if state != ConnectionState.READY:
+		_emit_switch_rejection(
+			workspace_handle,
+			"core_offline",
+			"WORKSPACE SWITCH OFFLINE",
+			true
+		)
+		return false
+	if workspace_handle.is_empty() or _switch_request_id != 0:
+		_emit_switch_rejection(
+			workspace_handle,
+			"switch_busy",
+			"SWITCH ALREADY IN PROGRESS",
+			true
+		)
+		return false
+	var request_id := _take_request_id()
+	_switch_request_id = request_id
+	_switch_handle = workspace_handle
+	_switch_elapsed = 0.0
+	var sent := _send_message({
+		"type": "switch_workspace",
+		"protocol_version": PROTOCOL_VERSION,
+		"request_id": request_id,
+		"workspace_handle": workspace_handle,
+	})
+	if not sent:
+		_clear_switch_request()
+		_emit_switch_rejection(workspace_handle, "send_failed", "REQUEST FAILED // RETRY", true)
+		return false
+	_emit_ux_status("switching_workspace", "SWITCHING WORKSPACE", "waiting", 0.0)
+	return true
 
 func launch_app(desktop_id: String) -> bool:
 	last_requested_desktop_id = desktop_id
@@ -217,6 +261,10 @@ func _on_socket_disconnected(_reason: String) -> void:
 	_waiting_for_pong = false
 	_application_request_id = 0
 	_session_request_id = 0
+	if _switch_request_id != 0:
+		var pending_handle := _switch_handle
+		_clear_switch_request()
+		_emit_switch_rejection(pending_handle, "connection_lost", "CONNECTION LOST // RETRY", true)
 	_fail_pending_launch("connection_lost", true)
 	if state != ConnectionState.INCOMPATIBLE and state != ConnectionState.DISCONNECTED:
 		_schedule_reconnect()
@@ -265,6 +313,16 @@ func _on_line_received(payload: String) -> void:
 			_on_workspace_snapshot(message)
 		"workspace_snapshot_rejected":
 			_on_workspace_snapshot_rejected(message)
+		"switch_accepted":
+			var request_id := int(message.get("request_id", 0))
+			if request_id != _switch_request_id:
+				return
+			var handle := String(message.get("workspace_handle", ""))
+			_clear_switch_request()
+			switch_accepted.emit(handle)
+			_emit_ux_status("switch_successful", "WORKSPACE SWITCHED", "ready", 2.0)
+		"switch_rejected":
+			_on_switch_rejected(message)
 		"launch_accepted":
 			var request_id := int(message.get("request_id", 0))
 			if request_id != _launch_request_id:
@@ -322,6 +380,47 @@ func _update_launch_timeout(delta: float) -> void:
 	_launch_elapsed += delta
 	if _launch_elapsed >= LAUNCH_TIMEOUT_SECONDS:
 		_fail_pending_launch("launch_timeout", true)
+	if _switch_request_id != 0:
+		_switch_elapsed += delta
+		if _switch_elapsed >= SWITCH_TIMEOUT_SECONDS:
+			var handle := _switch_handle
+			_clear_switch_request()
+			_emit_switch_rejection(handle, "switch_timeout", "SWITCH TIMED OUT // RETRY", true)
+
+func _clear_switch_request() -> void:
+	_switch_request_id = 0
+	_switch_handle = ""
+	_switch_elapsed = 0.0
+
+func _on_switch_rejected(message: Dictionary) -> void:
+	var request_id := int(message.get("request_id", 0))
+	if request_id != _switch_request_id:
+		return
+	var handle := String(message.get("workspace_handle", ""))
+	var code := String(message.get("code", "switch_failed"))
+	_clear_switch_request()
+	match code:
+		"hyprland_unavailable":
+			_set_session_availability("unavailable")
+			_emit_switch_rejection(handle, code, "NO HYPRLAND SESSION", false)
+		"hyprland_incompatible":
+			_set_session_availability("incompatible")
+			_emit_switch_rejection(handle, code, "SESSION INCOMPATIBLE", false)
+		"invalid_workspace_handle", "unknown_workspace_handle":
+			_emit_switch_rejection(handle, code, "WORKSPACE NO LONGER EXISTS", false)
+		"unsupported_workspace":
+			_emit_switch_rejection(handle, code, "SPECIAL WORKSPACES CANNOT SWITCH", false)
+		_:
+			_emit_switch_rejection(handle, code, "SWITCH FAILED // RETRY", true)
+
+func _emit_switch_rejection(
+	workspace_handle: String,
+	code: String,
+	message: String,
+	retryable: bool
+) -> void:
+	switch_rejected.emit(workspace_handle, code, message, retryable)
+	_emit_ux_status("switch_failed", message, "failure", 3.0 if retryable else -1.0)
 
 func _schedule_reconnect() -> void:
 	if state == ConnectionState.RECONNECTING:

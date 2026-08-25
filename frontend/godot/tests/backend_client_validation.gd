@@ -328,6 +328,65 @@ func _run() -> void:
 		"P3.06 reconnects preserve the last useful session state"
 	)
 
+	var switch_accepts: Array[String] = []
+	var switch_rejections: Array[String] = []
+	backend.switch_accepted.connect(func(handle: String) -> void:
+		switch_accepts.append(handle)
+	)
+	backend.switch_rejected.connect(func(handle: String, _code: String, _message: String, _retryable: bool) -> void:
+		switch_rejections.append(handle)
+	)
+
+	bridge.socket_connected.emit()
+	bridge.line_received.emit(JSON.stringify({
+		"type": "welcome",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"server_name": "velora-core-test",
+		"server_version": "0.2.0",
+	}))
+	_check(
+		backend.request_switch_workspace("workspace:3"),
+		"P3.09 ready client accepts a typed switch request"
+	)
+	var switch_request := _message_at(bridge, bridge.sent_lines.size() - 1)
+	_check(
+		switch_request.get("type") == "switch_workspace"
+		and switch_request.get("workspace_handle") == "workspace:3"
+		and int(switch_request.get("request_id", 0)) > 0
+		and not switch_request.has("dispatcher_command"),
+		"P3.09 switch requests carry only the opaque snapshot handle"
+	)
+	bridge.line_received.emit(JSON.stringify({
+		"type": "switch_accepted",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": switch_request.get("request_id"),
+		"workspace_handle": "workspace:3",
+	}))
+	_check(
+		switch_accepts == ["workspace:3"] and backend._switch_request_id == 0,
+		"P3.09 correlated acceptance clears pending state"
+	)
+
+	_check(backend.request_switch_workspace("workspace:4"), "P3.09 a second switch can be requested")
+	var second_switch := _message_at(bridge, bridge.sent_lines.size() - 1)
+	bridge.line_received.emit(JSON.stringify({
+		"type": "switch_rejected",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": second_switch.get("request_id"),
+		"workspace_handle": "workspace:4",
+		"code": "unknown_workspace_handle",
+	}))
+	_check(
+		switch_rejections == ["workspace:4"]
+		and last_ux_message == "WORKSPACE NO LONGER EXISTS",
+		"P3.09 rejections surface concise recoverable feedback"
+	)
+
+	_check(
+		not backend.request_switch_workspace(""),
+		"P3.09 empty handles are rejected locally without a request"
+	)
+
 	backend.queue_free()
 	await process_frame
 	if failures.is_empty():

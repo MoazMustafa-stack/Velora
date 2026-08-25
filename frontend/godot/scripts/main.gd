@@ -22,6 +22,7 @@ func _ready() -> void:
 	backend.session_snapshot_changed.connect(_on_session_snapshot_changed)
 	backend.session_availability_changed.connect(_on_session_availability_changed)
 	workspace_map.map_closed.connect(_on_map_closed)
+	workspace_map.switch_requested.connect(backend.request_switch_workspace)
 	if backend.session_availability != "unknown":
 		_on_session_availability_changed(backend.session_availability)
 	if not backend.applications.is_empty():

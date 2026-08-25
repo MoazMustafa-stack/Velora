@@ -197,6 +197,13 @@ pub enum Request {
         protocol_version: u8,
         request_id: u64,
     },
+    SwitchWorkspace {
+        protocol_version: u8,
+        request_id: u64,
+        /// A snapshot-issued opaque handle. Raw compositor selectors are never
+        /// accepted across IPC.
+        workspace_handle: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -254,6 +261,17 @@ pub enum Response {
         code: WorkspaceSnapshotError,
         retryable: bool,
     },
+    SwitchAccepted {
+        protocol_version: u8,
+        request_id: u64,
+        workspace_handle: String,
+    },
+    SwitchRejected {
+        protocol_version: u8,
+        request_id: u64,
+        workspace_handle: String,
+        code: WorkspaceSwitchError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -262,6 +280,17 @@ pub enum WorkspaceSnapshotError {
     HyprlandUnavailable,
     HyprlandIncompatible,
     SnapshotNotReady,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceSwitchError {
+    HyprlandUnavailable,
+    HyprlandIncompatible,
+    InvalidWorkspaceHandle,
+    UnknownWorkspaceHandle,
+    UnsupportedWorkspace,
+    SwitchFailed,
 }
 
 impl Request {
@@ -283,6 +312,9 @@ impl Request {
                 protocol_version, ..
             }
             | Self::GetWorkspaceSnapshot {
+                protocol_version, ..
+            }
+            | Self::SwitchWorkspace {
                 protocol_version, ..
             } => *protocol_version,
         }
@@ -490,6 +522,35 @@ mod tests {
         );
         let json = serde_json::to_string(&response).unwrap();
         assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+    }
+
+    #[test]
+    fn round_trips_switch_requests_and_typed_outcomes() {
+        let request = Request::SwitchWorkspace {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 21,
+            workspace_handle: "workspace:3".to_owned(),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+        assert_eq!(request.protocol_version(), PROTOCOL_VERSION);
+
+        let accepted = Response::SwitchAccepted {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 21,
+            workspace_handle: "workspace:3".to_owned(),
+        };
+        let json = serde_json::to_string(&accepted).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), accepted);
+
+        let rejected = Response::SwitchRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 22,
+            workspace_handle: "workspace:9999".to_owned(),
+            code: WorkspaceSwitchError::UnknownWorkspaceHandle,
+        };
+        let json = serde_json::to_string(&rejected).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), rejected);
     }
 
     #[test]
