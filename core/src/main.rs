@@ -4,9 +4,13 @@ mod hyprland;
 mod hyprland_events;
 mod ipc;
 mod launch;
+mod session_store;
 
 use anyhow::Result;
+use std::sync::Arc;
+use tokio::sync::watch;
 use tracing::{debug, info};
+use velora_protocol::HyprlandAvailability;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,7 +25,7 @@ async fn main() -> Result<()> {
     let desktop_files = apps::discover_desktop_files(&application_directories)?;
     let applications = apps::load_applications(&desktop_files);
     let launch_paths = apps::launch_paths(&desktop_files, &applications);
-    let launcher = std::sync::Arc::new(launch::LaunchService::new(&applications, launch_paths));
+    let launcher = Arc::new(launch::LaunchService::new(&applications, launch_paths));
 
     info!(?application_directories, "application search path resolved");
     info!(
@@ -42,5 +46,52 @@ async fn main() -> Result<()> {
         ?hyprland_capabilities,
         "Hyprland capability probe completed"
     );
-    ipc::serve(config, applications.into(), launcher, hyprland_capabilities).await
+
+    let session_store = start_session_store(&hyprland_capabilities);
+    let result = ipc::serve(
+        config,
+        applications.into(),
+        launcher,
+        hyprland_capabilities,
+        session_store,
+    )
+    .await;
+    session_shutdown::complete();
+    result
+}
+
+/// When Hyprland is fully available, keep an authoritative snapshot warm in
+/// the background. The shutdown sender is held by Core for its lifetime.
+fn start_session_store(
+    capabilities: &velora_protocol::HyprlandCapabilities,
+) -> Option<Arc<session_store::SessionStore>> {
+    if capabilities.availability != HyprlandAvailability::Available {
+        return None;
+    }
+    let (command_socket, event_socket) = hyprland::instance_sockets_from_environment()?;
+    let store = Arc::new(session_store::SessionStore::new(command_socket));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let runner = Arc::clone(&store);
+    tokio::spawn(runner.run_with_event_listener(event_socket, shutdown_rx));
+    session_shutdown::arm(shutdown_tx);
+    Some(store)
+}
+
+/// Process-wide holder for the session-store shutdown sender so the spawned
+/// runner stops cleanly exactly when main returns.
+mod session_shutdown {
+    use std::sync::Mutex;
+    use tokio::sync::watch;
+
+    static SENDER: Mutex<Option<watch::Sender<bool>>> = Mutex::new(None);
+
+    pub(super) fn arm(sender: watch::Sender<bool>) {
+        *SENDER.lock().unwrap() = Some(sender);
+    }
+
+    pub(super) fn complete() {
+        if let Some(sender) = SENDER.lock().unwrap().take() {
+            let _ = sender.send(true);
+        }
+    }
 }

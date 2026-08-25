@@ -19,13 +19,13 @@ use velora_protocol::{
     Window, Workspace, WorkspaceSnapshot,
 };
 
-const COMMAND_SOCKET_NAME: &str = ".socket.sock";
-const EVENT_SOCKET_NAME: &str = ".socket2.sock";
-const VERSION_REQUEST: &[u8] = b"j/version";
-const WORKSPACES_REQUEST: &[u8] = b"j/workspaces";
-const WINDOWS_REQUEST: &[u8] = b"j/clients";
-const ACTIVE_WORKSPACE_REQUEST: &[u8] = b"j/activeworkspace";
-const ACTIVE_WINDOW_REQUEST: &[u8] = b"j/activewindow";
+pub(crate) const COMMAND_SOCKET_NAME: &str = ".socket.sock";
+pub(crate) const EVENT_SOCKET_NAME: &str = ".socket2.sock";
+pub(crate) const VERSION_REQUEST: &[u8] = b"j/version";
+pub(crate) const WORKSPACES_REQUEST: &[u8] = b"j/workspaces";
+pub(crate) const WINDOWS_REQUEST: &[u8] = b"j/clients";
+pub(crate) const ACTIVE_WORKSPACE_REQUEST: &[u8] = b"j/activeworkspace";
+pub(crate) const ACTIVE_WINDOW_REQUEST: &[u8] = b"j/activewindow";
 const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_WORKSPACE_NAME_CHARS: usize = 128;
 const MAX_WINDOW_TITLE_CHARS: usize = 256;
@@ -52,6 +52,21 @@ pub(crate) async fn probe_from_environment() -> HyprlandCapabilities {
         env::var_os("HYPRLAND_INSTANCE_SIGNATURE").as_deref(),
     )
     .await
+}
+
+/// Locate the documented command/event socket pair for the running Hyprland
+/// instance, or None when the runtime identity is missing or unsafe.
+pub(crate) fn instance_sockets_from_environment() -> Option<(PathBuf, PathBuf)> {
+    let runtime_dir = env::var_os("XDG_RUNTIME_DIR")
+        .as_deref()
+        .and_then(absolute_path)?;
+    let signature = env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+    let instance_signature = valid_instance_signature(signature.as_os_str())?;
+    let instance_directory = runtime_dir.join("hypr").join(instance_signature);
+    let command_socket = instance_directory.join(COMMAND_SOCKET_NAME);
+    let event_socket = instance_directory.join(EVENT_SOCKET_NAME);
+    (is_socket(&command_socket) && is_socket(&event_socket))
+        .then_some((command_socket, event_socket))
 }
 
 async fn probe_with_environment(
