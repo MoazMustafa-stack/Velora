@@ -179,6 +179,155 @@ func _run() -> void:
 		"P2.10 unexpected disconnect enters reconnecting state"
 	)
 
+	var snapshot_emissions := [0]
+	var availability_emissions := [0]
+	var last_availability := [""]
+	backend.session_snapshot_changed.connect(func(_snapshot: Dictionary) -> void:
+		snapshot_emissions[0] += 1
+	)
+	backend.session_availability_changed.connect(func(availability: String) -> void:
+		availability_emissions[0] += 1
+		last_availability[0] = availability
+	)
+
+	bridge.socket_connected.emit()
+	var welcome_again := _message_at(bridge, 0)
+	bridge.line_received.emit(JSON.stringify({
+		"type": "welcome",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"server_name": "velora-core-test",
+		"server_version": "0.2.0",
+	}))
+	var capability_request := _message_at(bridge, bridge.sent_lines.size() - 2)
+	var snapshot_request := _message_at(bridge, bridge.sent_lines.size() - 1)
+	_check(
+		capability_request.get("type") == "get_hyprland_capabilities"
+		and snapshot_request.get("type") == "get_workspace_snapshot",
+		"P3.06 ready state requests Hyprland capabilities and a session snapshot"
+	)
+
+	bridge.line_received.emit(JSON.stringify({
+		"type": "hyprland_capabilities",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": capability_request.get("request_id"),
+		"capabilities": {
+			"availability": "available",
+			"version": "0.56.2",
+			"can_query_workspaces": true,
+			"can_query_windows": true,
+			"can_query_active_workspace": true,
+			"can_query_active_window": true,
+			"can_receive_events": true,
+		},
+	}))
+	_check(
+		backend.session_availability == "available" and availability_emissions[0] == 1,
+		"P3.06 available capabilities update the typed session availability"
+	)
+
+	var first_snapshot := {
+		"sequence": 1,
+		"workspaces": [{
+			"handle": "workspace:1",
+			"name": "1",
+			"index": 1,
+			"monitor": "eDP-1",
+			"window_count": 1,
+			"is_active": true,
+			"is_special": false,
+			"is_urgent": false,
+		}],
+		"windows": [{
+			"handle": "window:abc",
+			"workspace_handle": "workspace:1",
+			"title": "Editor",
+			"class": "code",
+			"is_active": true,
+			"is_floating": false,
+			"is_fullscreen": false,
+		}],
+		"active_workspace_handle": "workspace:1",
+		"active_window_handle": "window:abc",
+	}
+	bridge.line_received.emit(JSON.stringify({
+		"type": "workspace_snapshot",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": snapshot_request.get("request_id"),
+		"snapshot": first_snapshot,
+	}))
+	_check(
+		backend.session_snapshot.get("sequence") == 1 and snapshot_emissions[0] == 1,
+		"P3.06 valid snapshots are normalized, stored, and signalled"
+	)
+	_check(
+		backend._session_request_id == 0,
+		"P3.06 fulfilled snapshot requests clear their correlation ID"
+	)
+
+	bridge.line_received.emit(JSON.stringify({
+		"type": "workspace_snapshot",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": 9999,
+		"snapshot": first_snapshot,
+	}))
+	_check(
+		snapshot_emissions[0] == 1
+		and backend.session_snapshot.get("sequence") == 1,
+		"P3.06 stale or equal sequences are ignored as fencing tokens"
+	)
+
+	bridge.line_received.emit(JSON.stringify({
+		"type": "workspace_snapshot",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": 0,
+		"snapshot": {"sequence": 2, "workspaces": [], "windows": [
+			{"handle": "w", "workspace_handle": "workspace:missing", "title": "", "class": "",
+				"is_active": false, "is_floating": false, "is_fullscreen": false},
+		]},
+	}))
+	_check(
+		last_ux_stage == "session_failed" and last_ux_message == "INVALID SESSION DATA",
+		"P3.06 malformed snapshots produce concise visible feedback"
+	)
+	_check(
+		backend.session_snapshot.get("sequence") == 1,
+		"P3.06 malformed snapshots never replace last good state"
+	)
+
+	var second_snapshot = first_snapshot.duplicate(true)
+	second_snapshot["sequence"] = 2
+	second_snapshot["active_window_handle"] = null
+	bridge.line_received.emit(JSON.stringify({
+		"type": "workspace_snapshot",
+		"protocol_version": BackendClient.PROTOCOL_VERSION,
+		"request_id": 0,
+		"snapshot": second_snapshot,
+	}))
+	_check(
+		backend.session_snapshot.get("sequence") == 2 and snapshot_emissions[0] == 2,
+		"P3.06 newer snapshots replace state even when unprompted"
+	)
+
+	for _attempt in 2:
+		bridge.line_received.emit(JSON.stringify({
+			"type": "workspace_snapshot_rejected",
+			"protocol_version": BackendClient.PROTOCOL_VERSION,
+			"request_id": 0,
+			"code": "hyprland_unavailable",
+			"retryable": true,
+		}))
+	_check(
+		backend.session_availability == "unavailable" and availability_emissions[0] == 2,
+		"P3.06 unavailability is reported once without log spam"
+	)
+
+	bridge.socket_disconnected.emit("test disconnect")
+	_check(
+		not backend.session_snapshot.is_empty()
+		and int(backend.session_snapshot.get("sequence", 0)) == 2,
+		"P3.06 reconnects preserve the last useful session state"
+	)
+
 	backend.queue_free()
 	await process_frame
 	if failures.is_empty():
