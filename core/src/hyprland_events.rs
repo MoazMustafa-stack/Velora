@@ -1,7 +1,5 @@
 //! Typed parsing of Hyprland event-socket lines. Events are invalidation
 //! hints only: they never build state, they only request a fresh snapshot.
-// TODO(P3.05): remove this allow once the session store consumes the listener.
-#![allow(dead_code)]
 
 use std::{
     path::PathBuf,
