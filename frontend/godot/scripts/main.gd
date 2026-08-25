@@ -3,8 +3,10 @@ extends Node2D
 @onready var player: CharacterBody2D = $World/Player
 @onready var backend: Node = $BackendClient
 @onready var hud: CanvasLayer = $HUD
+@onready var workspace_map: CanvasLayer = $WorkspaceMap
 
 var menu_open := false
+var map_open := false
 
 func _ready() -> void:
 	player.interaction_changed.connect(hud.set_interaction_prompt)
@@ -15,9 +17,36 @@ func _ready() -> void:
 	backend.ux_status_changed.connect(_on_backend_ux_status)
 	backend.launch_status_changed.connect(_on_launch_status_changed)
 	backend.applications_changed.connect(_on_applications_changed)
+	backend.session_snapshot_changed.connect(_on_session_snapshot_changed)
+	backend.session_availability_changed.connect(_on_session_availability_changed)
+	workspace_map.map_closed.connect(_on_map_closed)
+	if backend.session_availability != "unknown":
+		_on_session_availability_changed(backend.session_availability)
 	if not backend.applications.is_empty():
 		_on_applications_changed(backend.applications)
 	hud.set_status("VELORA // POCKET TERMINAL")
+
+func _unhandled_input(event: InputEvent) -> void:
+	if menu_open or map_open or not event is InputEventKey:
+		return
+	if event.pressed and not event.echo and event.keycode in [KEY_TAB, KEY_M]:
+		get_viewport().set_input_as_handled()
+		_toggle_workspace_map()
+
+func _toggle_workspace_map() -> void:
+	map_open = true
+	player.set_input_enabled(false)
+	workspace_map.open()
+
+func _on_map_closed() -> void:
+	map_open = false
+	player.set_input_enabled(true)
+
+func _on_session_snapshot_changed(snapshot: Dictionary) -> void:
+	workspace_map.update_session(snapshot)
+
+func _on_session_availability_changed(availability: String) -> void:
+	workspace_map.set_availability(availability)
 
 func _on_station_status_changed(message: String, tone: String) -> void:
 	hud.show_transient(message, tone, 3.0)
