@@ -67,6 +67,7 @@ case "$command_name" in
     "$script_dir/velora.sh" check
     "$script_dir/check-ipc.sh"
     "$script_dir/check-security.sh"
+    "$script_dir/check-core-resources.sh"
     ;;
   perf|performance)
     "$script_dir/build-bridge.sh"

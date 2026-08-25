@@ -20,7 +20,7 @@ use velora_protocol::{
 };
 
 pub(crate) const COMMAND_SOCKET_NAME: &str = ".socket.sock";
-const EVENT_SOCKET_NAME: &str = ".socket2.sock";
+pub(crate) const EVENT_SOCKET_NAME: &str = ".socket2.sock";
 pub(crate) const VERSION_REQUEST: &[u8] = b"j/version";
 pub(crate) const WORKSPACES_REQUEST: &[u8] = b"j/workspaces";
 pub(crate) const WINDOWS_REQUEST: &[u8] = b"j/clients";
@@ -1013,6 +1013,58 @@ mod tests {
             Some("workspace:2")
         );
         snapshot.validate().unwrap();
+    }
+
+    #[test]
+    fn phase_three_scale_fixture_normalizes_within_bounds() {
+        // Release-gate fixture: 20 workspaces and 100 windows must survive
+        // normalization, validation, and stay within the protocol bounds.
+        let mut workspaces: Vec<serde_json::Value> = Vec::new();
+        for id in 0..20 {
+            workspaces.push(serde_json::json!({
+                "id": id,
+                "name": format!("ws{id}"),
+                "monitor": "eDP-1",
+                "windows": 5
+            }));
+        }
+        let mut clients: Vec<serde_json::Value> = Vec::new();
+        for id in 0..100 {
+            clients.push(serde_json::json!({
+                "address": format!("0x{id:x}{id:04x}"),
+                "mapped": true,
+                "workspace": {"id": id % 20},
+                "title": format!("Window {id}"),
+                "class": if id % 3 == 0 { "code" } else { "foot" },
+                "floating": id % 2 == 0,
+                "fullscreen": false
+            }));
+        }
+
+        let reading = normalize_session(
+            100,
+            &serde_json::json!(workspaces),
+            &serde_json::json!(clients),
+            &serde_json::json!({"id": 3}),
+            &serde_json::json!({}),
+        )
+        .unwrap();
+
+        let snapshot = reading.snapshot;
+        assert_eq!(snapshot.workspaces.len(), 20);
+        assert_eq!(snapshot.windows.len(), 100);
+        snapshot.validate().unwrap();
+        let total_windows: u16 = snapshot.workspaces.iter().map(|w| w.window_count).sum();
+        assert_eq!(total_windows, 100);
+        assert_eq!(reading.window_addresses.len(), 100);
+
+        // Handles stay opaque at scale.
+        assert!(
+            snapshot
+                .windows
+                .iter()
+                .all(|window| window.handle.starts_with("window:") && !window.handle.contains("0x"))
+        );
     }
 
     #[tokio::test]
