@@ -26,7 +26,7 @@ enum ConnectionState {
 	INCOMPATIBLE,
 }
 
-const PROTOCOL_VERSION := 3
+const PROTOCOL_VERSION := 4
 const CLIENT_NAME := "velora-godot"
 const CLIENT_VERSION := "0.2.0"
 const PING_INTERVAL_SECONDS := 5.0

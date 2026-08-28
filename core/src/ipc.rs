@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use velora_protocol::{
     Application, HANDSHAKE_TIMEOUT_SECONDS, HyprlandAvailability, HyprlandCapabilities,
     MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, Request, Response, SERVER_NAME,
-    WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
+    TelemetrySnapshotError, WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
 };
 
 use crate::session_store::SessionStore;
@@ -337,6 +337,14 @@ where
                     session.as_deref(),
                 )
                 .await
+            }
+            Ok(Request::GetTelemetrySnapshot { request_id, .. }) => {
+                Response::TelemetrySnapshotRejected {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    code: TelemetrySnapshotError::SnapshotNotReady,
+                    retryable: true,
+                }
             }
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
@@ -1226,6 +1234,7 @@ mod tests {
         for generation in 1..=2 {
             let config = CoreConfig {
                 socket_path: socket_path.clone(),
+                telemetry: crate::config::TelemetryPolicy::default(),
             };
             let launcher = Arc::new(MockLauncher::new(MockLaunchOutcome::Accepted(
                 5000 + generation,
@@ -1366,6 +1375,23 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 request_id: 92,
                 code: WorkspaceSnapshotError::SnapshotNotReady,
+                retryable: true,
+            }
+        );
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetTelemetrySnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 93,
+                },
+            )
+            .await,
+            Response::TelemetrySnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 93,
+                code: TelemetrySnapshotError::SnapshotNotReady,
                 retryable: true,
             }
         );

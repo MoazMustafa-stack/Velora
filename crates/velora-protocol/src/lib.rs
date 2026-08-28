@@ -2,15 +2,21 @@ use serde::{Deserialize, Serialize};
 use std::{env, path::PathBuf};
 use thiserror::Error;
 
-/// Phase 3 adds the Hyprland capability contract and typed workspace/window
-/// snapshot model. Core and Godot intentionally require an exact match.
-pub const PROTOCOL_VERSION: u8 = 3;
+/// Core, the native bridge, and Godot intentionally require an exact match.
+/// Phase 4 adds the typed system-telemetry contract.
+pub const PROTOCOL_VERSION: u8 = 4;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const HANDSHAKE_TIMEOUT_SECONDS: u64 = 5;
 pub const DEFAULT_APPLICATION_PAGE_SIZE: u16 = 32;
 pub const MAX_APPLICATION_PAGE_SIZE: u16 = 64;
 pub const MAX_WORKSPACES: usize = 128;
 pub const MAX_WINDOWS: usize = 1024;
+pub const DEFAULT_TELEMETRY_INTERVAL_MS: u32 = 1_000;
+pub const MIN_TELEMETRY_INTERVAL_MS: u32 = 250;
+pub const MAX_TELEMETRY_INTERVAL_MS: u32 = 10_000;
+pub const MAX_TELEMETRY_DEVICES: u16 = 64;
+pub const MAX_TELEMETRY_INTERFACES: u16 = 64;
+pub const MAX_TELEMETRY_PAYLOAD_BYTES: usize = 4 * 1024;
 pub const CLIENT_NAME: &str = "velora-godot";
 pub const SERVER_NAME: &str = "velora-core";
 
@@ -156,6 +162,127 @@ impl WorkspaceSnapshot {
     }
 }
 
+/// Availability is explicit so zero remains a real measurement rather than an
+/// error sentinel. `WarmingUp` is used while a counter-based metric waits for
+/// the second sample needed to calculate a rate.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetryAvailability {
+    Available,
+    WarmingUp,
+    Offline,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CpuTelemetry {
+    pub availability: TelemetryAvailability,
+    /// `10_000` basis points represents 100.00% utilization.
+    pub utilization_basis_points: Option<u16>,
+    pub logical_cpu_count: u16,
+    /// Load averages are fixed-point values where `1_000` represents 1.0.
+    pub load_1m_milli: u32,
+    pub load_5m_milli: u32,
+    pub load_15m_milli: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MemoryTelemetry {
+    pub availability: TelemetryAvailability,
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+    pub used_bytes: u64,
+    pub cached_bytes: u64,
+    pub swap_total_bytes: u64,
+    pub swap_used_bytes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DiskTelemetry {
+    pub availability: TelemetryAvailability,
+    pub read_bytes_per_second: u64,
+    pub write_bytes_per_second: u64,
+    pub device_count: u16,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NetworkTelemetry {
+    pub availability: TelemetryAvailability,
+    pub receive_bytes_per_second: u64,
+    pub transmit_bytes_per_second: u64,
+    pub interface_count: u16,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TelemetrySnapshot {
+    /// Monotonically increasing within one Core session.
+    pub sequence: u64,
+    pub sampled_at_unix_ms: u64,
+    pub sample_interval_ms: u32,
+    pub cpu: CpuTelemetry,
+    pub memory: MemoryTelemetry,
+    pub disk: DiskTelemetry,
+    pub network: NetworkTelemetry,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum TelemetryValidationError {
+    #[error("telemetry sample interval is outside the supported policy")]
+    InvalidSampleInterval,
+    #[error("CPU utilization exceeds 100.00%")]
+    InvalidCpuUtilization,
+    #[error("memory telemetry contains inconsistent byte totals")]
+    InvalidMemoryTotals,
+    #[error("swap telemetry contains inconsistent byte totals")]
+    InvalidSwapTotals,
+    #[error("telemetry contains more than {MAX_TELEMETRY_DEVICES} disk devices")]
+    TooManyDevices,
+    #[error("telemetry contains more than {MAX_TELEMETRY_INTERFACES} network interfaces")]
+    TooManyInterfaces,
+}
+
+impl TelemetrySnapshot {
+    pub fn is_newer_than(&self, sequence: u64) -> bool {
+        self.sequence > sequence
+    }
+
+    pub fn validate(&self) -> Result<(), TelemetryValidationError> {
+        if !(MIN_TELEMETRY_INTERVAL_MS..=MAX_TELEMETRY_INTERVAL_MS)
+            .contains(&self.sample_interval_ms)
+        {
+            return Err(TelemetryValidationError::InvalidSampleInterval);
+        }
+        if self
+            .cpu
+            .utilization_basis_points
+            .is_some_and(|value| value > 10_000)
+        {
+            return Err(TelemetryValidationError::InvalidCpuUtilization);
+        }
+        if self.memory.available_bytes > self.memory.total_bytes
+            || self.memory.used_bytes > self.memory.total_bytes
+            || self.memory.cached_bytes > self.memory.total_bytes
+            || self.memory.used_bytes
+                != self
+                    .memory
+                    .total_bytes
+                    .saturating_sub(self.memory.available_bytes)
+        {
+            return Err(TelemetryValidationError::InvalidMemoryTotals);
+        }
+        if self.memory.swap_used_bytes > self.memory.swap_total_bytes {
+            return Err(TelemetryValidationError::InvalidSwapTotals);
+        }
+        if self.disk.device_count > MAX_TELEMETRY_DEVICES {
+            return Err(TelemetryValidationError::TooManyDevices);
+        }
+        if self.network.interface_count > MAX_TELEMETRY_INTERFACES {
+            return Err(TelemetryValidationError::TooManyInterfaces);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Application {
     pub id: String,
@@ -209,6 +336,12 @@ pub enum Request {
         request_id: u64,
         /// A snapshot-issued opaque handle. Never a raw selector string.
         window_handle: String,
+    },
+    /// Returns Core's latest cached sample. Clients cannot request a sampling
+    /// frequency, so they cannot bypass the server-owned sampling policy.
+    GetTelemetrySnapshot {
+        protocol_version: u8,
+        request_id: u64,
     },
 }
 
@@ -289,6 +422,25 @@ pub enum Response {
         window_handle: String,
         code: WindowFocusError,
     },
+    TelemetrySnapshot {
+        protocol_version: u8,
+        request_id: u64,
+        snapshot: TelemetrySnapshot,
+    },
+    TelemetrySnapshotRejected {
+        protocol_version: u8,
+        request_id: u64,
+        code: TelemetrySnapshotError,
+        retryable: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetrySnapshotError {
+    Disabled,
+    SnapshotNotReady,
+    SamplerUnavailable,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -345,6 +497,9 @@ impl Request {
             }
             | Self::FocusWindow {
                 protocol_version, ..
+            }
+            | Self::GetTelemetrySnapshot {
+                protocol_version, ..
             } => *protocol_version,
         }
     }
@@ -397,7 +552,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            r#"{"type":"hello","protocol_version":3,"client_name":"velora-godot","client_version":"0.2.0"}"#
+            r#"{"type":"hello","protocol_version":4,"client_name":"velora-godot","client_version":"0.2.0"}"#
         );
     }
 
@@ -622,6 +777,120 @@ mod tests {
         assert_eq!(
             snapshot.validate(),
             Err(SnapshotValidationError::UnknownWindowWorkspace)
+        );
+    }
+
+    fn test_telemetry_snapshot() -> TelemetrySnapshot {
+        TelemetrySnapshot {
+            sequence: 8,
+            sampled_at_unix_ms: 1_777_777_777_000,
+            sample_interval_ms: DEFAULT_TELEMETRY_INTERVAL_MS,
+            cpu: CpuTelemetry {
+                availability: TelemetryAvailability::Available,
+                utilization_basis_points: Some(3_725),
+                logical_cpu_count: 8,
+                load_1m_milli: 750,
+                load_5m_milli: 1_250,
+                load_15m_milli: 2_000,
+            },
+            memory: MemoryTelemetry {
+                availability: TelemetryAvailability::Available,
+                total_bytes: 16 * 1024 * 1024 * 1024,
+                available_bytes: 10 * 1024 * 1024 * 1024,
+                used_bytes: 6 * 1024 * 1024 * 1024,
+                cached_bytes: 2 * 1024 * 1024 * 1024,
+                swap_total_bytes: 4 * 1024 * 1024 * 1024,
+                swap_used_bytes: 512 * 1024 * 1024,
+            },
+            disk: DiskTelemetry {
+                availability: TelemetryAvailability::Available,
+                read_bytes_per_second: 1_048_576,
+                write_bytes_per_second: 524_288,
+                device_count: 2,
+            },
+            network: NetworkTelemetry {
+                availability: TelemetryAvailability::Offline,
+                receive_bytes_per_second: 0,
+                transmit_bytes_per_second: 0,
+                interface_count: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn round_trips_telemetry_request_snapshot_and_rejection() {
+        let request = Request::GetTelemetrySnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 41,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+        assert_eq!(request.protocol_version(), PROTOCOL_VERSION);
+
+        let response = Response::TelemetrySnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 41,
+            snapshot: test_telemetry_snapshot(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.len() <= MAX_TELEMETRY_PAYLOAD_BYTES);
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+
+        let rejected = Response::TelemetrySnapshotRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 42,
+            code: TelemetrySnapshotError::SnapshotNotReady,
+            retryable: true,
+        };
+        let json = serde_json::to_string(&rejected).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), rejected);
+    }
+
+    #[test]
+    fn validates_telemetry_policy_and_bounds() {
+        let mut snapshot = test_telemetry_snapshot();
+        assert!(snapshot.validate().is_ok());
+        assert!(snapshot.is_newer_than(7));
+        assert!(!snapshot.is_newer_than(8));
+
+        snapshot.sample_interval_ms = MIN_TELEMETRY_INTERVAL_MS - 1;
+        assert_eq!(
+            snapshot.validate(),
+            Err(TelemetryValidationError::InvalidSampleInterval)
+        );
+        snapshot.sample_interval_ms = DEFAULT_TELEMETRY_INTERVAL_MS;
+        snapshot.cpu.utilization_basis_points = Some(10_001);
+        assert_eq!(
+            snapshot.validate(),
+            Err(TelemetryValidationError::InvalidCpuUtilization)
+        );
+        snapshot.cpu.utilization_basis_points = Some(10_000);
+        snapshot.disk.device_count = MAX_TELEMETRY_DEVICES + 1;
+        assert_eq!(
+            snapshot.validate(),
+            Err(TelemetryValidationError::TooManyDevices)
+        );
+
+        snapshot.disk.device_count = MAX_TELEMETRY_DEVICES;
+        snapshot.network.interface_count = MAX_TELEMETRY_INTERFACES + 1;
+        assert_eq!(
+            snapshot.validate(),
+            Err(TelemetryValidationError::TooManyInterfaces)
+        );
+
+        snapshot.network.interface_count = MAX_TELEMETRY_INTERFACES;
+        snapshot.memory.available_bytes = snapshot.memory.total_bytes + 1;
+        assert_eq!(
+            snapshot.validate(),
+            Err(TelemetryValidationError::InvalidMemoryTotals)
+        );
+
+        snapshot.memory.available_bytes = 10 * 1024 * 1024 * 1024;
+        snapshot.memory.used_bytes = 6 * 1024 * 1024 * 1024;
+        snapshot.sample_interval_ms = MAX_TELEMETRY_INTERVAL_MS + 1;
+        assert_eq!(
+            snapshot.validate(),
+            Err(TelemetryValidationError::InvalidSampleInterval)
         );
     }
 }

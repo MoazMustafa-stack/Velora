@@ -45,6 +45,12 @@ async fn main() -> Result<()> {
     }
     info!(socket = %config.socket_path.display(), "Velora Core starting");
     info!(
+        telemetry_interval_ms = config.telemetry.interval.as_millis(),
+        telemetry_max_devices = config.telemetry.max_devices,
+        telemetry_max_interfaces = config.telemetry.max_interfaces,
+        "telemetry sampling policy resolved"
+    );
+    info!(
         ?hyprland_capabilities,
         "Hyprland capability probe completed"
     );
