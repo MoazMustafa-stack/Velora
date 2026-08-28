@@ -7,6 +7,7 @@ mod hyprland_integration;
 mod ipc;
 mod launch;
 mod session_store;
+pub mod telemetry;
 
 use anyhow::Result;
 use std::sync::Arc;
