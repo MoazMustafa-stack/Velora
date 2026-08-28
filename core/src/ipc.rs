@@ -1539,7 +1539,7 @@ mod tests {
             let (mut stream, _) = hyprland_listener.accept().unwrap();
             let mut command = Vec::new();
             stream.read_to_end(&mut command).unwrap();
-            assert_eq!(command, b"dispatch workspace 3");
+            assert_eq!(command, br#"dispatch hl.dsp.focus({ workspace = "3" })"#);
             stream.write_all(b"ok").unwrap();
         });
 
@@ -1660,7 +1660,10 @@ mod tests {
             let (mut stream, _) = hyprland_listener.accept().unwrap();
             let mut command = Vec::new();
             stream.read_to_end(&mut command).unwrap();
-            assert_eq!(command, b"dispatch focuswindow address:0xaa");
+            assert_eq!(
+                command,
+                br#"dispatch hl.dsp.focus({ window = "address:0xaa" })"#
+            );
             stream.write_all(b"ok").unwrap();
             drop(stream);
             for (request, response) in [

@@ -27,7 +27,6 @@ pub(crate) const WINDOWS_REQUEST: &[u8] = b"j/clients";
 pub(crate) const ACTIVE_WORKSPACE_REQUEST: &[u8] = b"j/activeworkspace";
 pub(crate) const ACTIVE_WINDOW_REQUEST: &[u8] = b"j/activewindow";
 const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
-const WORKSPACE_DISPATCH_LIMIT: usize = 32;
 const MAX_WORKSPACE_NAME_CHARS: usize = 128;
 const MAX_WINDOW_TITLE_CHARS: usize = 256;
 const MAX_WINDOW_CLASS_CHARS: usize = 128;
@@ -484,10 +483,8 @@ pub(crate) async fn switch_to_workspace_id(
             "workspace id outside the switchable range",
         ));
     }
-    let mut command = Vec::with_capacity(WORKSPACE_DISPATCH_LIMIT);
-    command.extend_from_slice(b"dispatch workspace ");
-    command.extend_from_slice(id.to_string().as_bytes());
-    dispatch_command(command_socket, &command).await
+    let command = format!(r#"dispatch hl.dsp.focus({{ workspace = "{id}" }})"#);
+    dispatch_command(command_socket, command.as_bytes()).await
 }
 
 /// Focus one window by its compositor address. The address never originates
@@ -509,10 +506,8 @@ pub(crate) async fn focus_window_by_address(
             "compositor window address failed validation",
         ));
     }
-    let mut command = Vec::with_capacity(WORKSPACE_DISPATCH_LIMIT + address.len());
-    command.extend_from_slice(b"dispatch focuswindow address:");
-    command.extend_from_slice(address.as_bytes());
-    dispatch_command(command_socket, &command).await
+    let command = format!(r#"dispatch hl.dsp.focus({{ window = "address:{address}" }})"#);
+    dispatch_command(command_socket, command.as_bytes()).await
 }
 
 /// Send one documented dispatcher command and require the compositor's `ok`
@@ -1087,7 +1082,7 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let mut received = Vec::new();
             stream.read_to_end(&mut received).unwrap();
-            assert_eq!(received, b"dispatch workspace 3");
+            assert_eq!(received, br#"dispatch hl.dsp.focus({ workspace = "3" })"#);
             use std::io::Write;
             stream.write_all(b"ok").unwrap();
             drop(stream);
@@ -1095,7 +1090,7 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let mut received = Vec::new();
             stream.read_to_end(&mut received).unwrap();
-            assert_eq!(received, b"dispatch workspace 4");
+            assert_eq!(received, br#"dispatch hl.dsp.focus({ workspace = "4" })"#);
             stream.write_all(b"invalid workspace").unwrap();
         });
 
