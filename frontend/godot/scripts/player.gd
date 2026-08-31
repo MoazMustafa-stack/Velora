@@ -62,13 +62,15 @@ func _set_facing_from_movement(movement: Vector2) -> void:
 	_update_detector_position()
 
 func _update_detector_position() -> void:
-	var offsets := {
-		Vector2.UP: Vector2(0, -14),
-		Vector2.DOWN: Vector2(0, 14),
-		Vector2.LEFT: Vector2(-12, 4),
-		Vector2.RIGHT: Vector2(12, 4),
-	}
-	interaction_detector.position = offsets.get(facing, Vector2(0, 14))
+	match facing:
+		Vector2.UP:
+			interaction_detector.position = Vector2(0, -14)
+		Vector2.LEFT:
+			interaction_detector.position = Vector2(-12, 4)
+		Vector2.RIGHT:
+			interaction_detector.position = Vector2(12, 4)
+		_:
+			interaction_detector.position = Vector2(0, 14)
 
 func _update_animation(delta: float, moving: bool) -> void:
 	if moving:

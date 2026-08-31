@@ -40,28 +40,35 @@ pub fn parse_diskstats(
 ) -> Result<DiskCountersSnapshot, DiskParseError> {
     let mut devices = BTreeMap::new();
     for line in input.lines() {
-        let fields: Vec<_> = line.split_ascii_whitespace().collect();
-        let Some(name) = fields.get(2).copied() else {
+        let mut fields = line.split_ascii_whitespace();
+        let Some(major) = fields.next() else {
+            continue;
+        };
+        let Some(minor) = fields.next() else {
+            continue;
+        };
+        let Some(name) = fields.next() else {
             continue;
         };
         if !is_allowed_whole_device(name) {
             continue;
         }
-        if fields.len() < 10 {
-            return Err(DiskParseError::TruncatedEntry);
-        }
         // Validate the kernel identity fields even though names remain private
         // and only aggregate rates cross IPC.
-        fields[0]
+        major
             .parse::<u32>()
             .map_err(|_| DiskParseError::InvalidCounter)?;
-        fields[1]
+        minor
             .parse::<u32>()
             .map_err(|_| DiskParseError::InvalidCounter)?;
-        let read_sectors = fields[5]
+        let read_sectors = fields
+            .nth(2)
+            .ok_or(DiskParseError::TruncatedEntry)?
             .parse::<u64>()
             .map_err(|_| DiskParseError::InvalidCounter)?;
-        let written_sectors = fields[9]
+        let written_sectors = fields
+            .nth(3)
+            .ok_or(DiskParseError::TruncatedEntry)?
             .parse::<u64>()
             .map_err(|_| DiskParseError::InvalidCounter)?;
 
