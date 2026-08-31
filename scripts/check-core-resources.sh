@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# P3.12 release gate: measure idle Core CPU and RSS against the Phase 3
-# budgets (Core idle below 1% of one CPU; no sustained memory growth).
+# P4.11 performance gate: sample Core while the bounded telemetry service is
+# active. The sampler must stay below 0.5% of one CPU and retain no history.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -67,27 +67,27 @@ read -r _ _ r3 < "$samples_dir/final"
 
 cpu_ticks=$(( (u2 - u1) + (s2 - s1) ))
 interval_seconds=5
-cpu_percent=$(( 100 * cpu_ticks / (clock_ticks * interval_seconds) ))
+cpu_basis_points=$(( 10000 * cpu_ticks / (clock_ticks * interval_seconds) ))
 
 rss_kib_early="$r1"
 rss_kib_late="$r2"
 growth_kib=$(( rss_kib_late - rss_kib_early ))
 
-echo "Core idle CPU: ${cpu_percent}% of one core over ${interval_seconds}s"
+echo "Core idle CPU: $((cpu_basis_points / 100)).$((cpu_basis_points % 100))% of one core over ${interval_seconds}s"
 echo "Core RSS: early=${rss_kib_early} KiB late=${rss_kib_late} KiB final=${r3} KiB"
 echo "Core RSS growth over sample window: ${growth_kib} KiB"
 
-if (( cpu_percent > 1 )); then
-  echo "P3.12 gate failed: idle CPU ${cpu_percent}% exceeds the 1% budget" >&2
+if (( cpu_basis_points > 50 )); then
+  echo "P4.11 gate failed: telemetry idle CPU exceeds the 0.50% budget" >&2
   exit 1
 fi
 if (( growth_kib > 2048 )); then
-  echo "P3.12 gate failed: RSS grew by ${growth_kib} KiB while idle" >&2
+  echo "P4.11 gate failed: RSS grew by ${growth_kib} KiB while idle" >&2
   exit 1
 fi
 if (( rss_kib_late > 65536 )); then
-  echo "P3.12 gate failed: idle RSS ${rss_kib_late} KiB exceeds the 64 MiB ceiling" >&2
+  echo "P4.11 gate failed: idle RSS ${rss_kib_late} KiB exceeds the 64 MiB ceiling" >&2
   exit 1
 fi
 
-echo "PASS: P3.12 core resource budgets hold at idle."
+echo "PASS: P4.11 telemetry resource budgets hold at idle."
