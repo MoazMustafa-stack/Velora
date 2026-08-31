@@ -423,11 +423,10 @@ func _update_heartbeat(delta: float) -> void:
 		request_ping()
 
 func _update_launch_timeout(delta: float) -> void:
-	if _launch_request_id == 0:
-		return
-	_launch_elapsed += delta
-	if _launch_elapsed >= LAUNCH_TIMEOUT_SECONDS:
-		_fail_pending_launch("launch_timeout", true)
+	if _launch_request_id != 0:
+		_launch_elapsed += delta
+		if _launch_elapsed >= LAUNCH_TIMEOUT_SECONDS:
+			_fail_pending_launch("launch_timeout", true)
 	if _switch_request_id != 0:
 		_switch_elapsed += delta
 		if _switch_elapsed >= SWITCH_TIMEOUT_SECONDS:

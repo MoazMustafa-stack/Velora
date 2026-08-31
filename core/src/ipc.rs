@@ -15,6 +15,7 @@ use std::{
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
+    sync::watch,
     time::timeout,
 };
 use tracing::{info, warn};
@@ -253,9 +254,44 @@ where
         }
     }
 
+    let mut snapshot_updates = session.as_ref().map(|store| store.subscribe());
+    // Do not interleave a pushed snapshot into a client that has not yet
+    // requested its initial state. Once it has, every later changed snapshot
+    // is delivered with request ID zero.
+    let mut session_updates_enabled = false;
     loop {
-        let Some(line) = frame_to_line(read_frame(&mut reader).await?, &mut writer).await? else {
-            break;
+        let line = tokio::select! {
+            frame = read_frame(&mut reader) => {
+                let Some(line) = frame_to_line(frame?, &mut writer).await? else {
+                    break;
+                };
+                line
+            }
+            changed = wait_for_snapshot_update(&mut snapshot_updates) => {
+                if changed.is_err() {
+                    break;
+                }
+                let snapshot = snapshot_updates
+                    .as_mut()
+                    .and_then(|receiver| receiver.borrow_and_update().clone());
+                if !session_updates_enabled {
+                    continue;
+                }
+                let Some(snapshot) = snapshot else {
+                    continue;
+                };
+                write_response(
+                    &mut writer,
+                    &Response::WorkspaceSnapshot {
+                        protocol_version: PROTOCOL_VERSION,
+                        // A zero request ID identifies a Core-published update.
+                        request_id: 0,
+                        snapshot: (*snapshot).clone(),
+                    },
+                )
+                .await?;
+                continue;
+            }
         };
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(request) if request.protocol_version() != PROTOCOL_VERSION => {
@@ -359,6 +395,12 @@ where
             response,
             Response::Error { ref code, .. } if code == "protocol_mismatch"
         );
+        if matches!(response, Response::WorkspaceSnapshot { .. }) {
+            if let Some(receiver) = &mut snapshot_updates {
+                receiver.borrow_and_update();
+            }
+            session_updates_enabled = true;
+        }
         write_response(&mut writer, &response).await?;
         if should_close {
             break;
@@ -366,6 +408,15 @@ where
     }
     info!("frontend disconnected");
     Ok(())
+}
+
+async fn wait_for_snapshot_update(
+    receiver: &mut Option<watch::Receiver<Option<Arc<velora_protocol::WorkspaceSnapshot>>>>,
+) -> Result<(), watch::error::RecvError> {
+    match receiver {
+        Some(receiver) => receiver.changed().await,
+        None => std::future::pending().await,
+    }
 }
 
 fn workspace_snapshot_rejection(request_id: u64, capabilities: &HyprlandCapabilities) -> Response {

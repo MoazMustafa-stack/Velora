@@ -30,6 +30,10 @@ pub(crate) struct SessionStore {
     command_socket: PathBuf,
     sequence: AtomicU64,
     snapshot: Mutex<Option<Arc<WorkspaceSnapshot>>>,
+    /// Latest changed snapshot for IPC clients. `watch` deliberately
+    /// coalesces intermediate changes: clients only need the newest
+    /// authoritative state and the sequence fences stale data.
+    updates: watch::Sender<Option<Arc<WorkspaceSnapshot>>>,
     // Core-private handle -> compositor address mapping for focus requests.
     // Never serialized to any frontend.
     window_addresses: Mutex<HashMap<String, String>>,
@@ -38,10 +42,12 @@ pub(crate) struct SessionStore {
 
 impl SessionStore {
     pub(crate) fn new(command_socket: PathBuf) -> Self {
+        let (updates, _) = watch::channel(None);
         Self {
             command_socket,
             sequence: AtomicU64::new(0),
             snapshot: Mutex::new(None),
+            updates,
             window_addresses: Mutex::new(HashMap::new()),
             health: Mutex::new(StoreHealth::default()),
         }
@@ -60,8 +66,10 @@ impl SessionStore {
                     .is_none_or(|current| !content_eq(current, &fresh));
                 if changed {
                     self.sequence.store(next_sequence, Ordering::SeqCst);
-                    *stored = Some(Arc::new(fresh));
+                    let fresh = Arc::new(fresh);
+                    *stored = Some(Arc::clone(&fresh));
                     *self.window_addresses.lock().unwrap() = reading.window_addresses;
+                    self.updates.send_replace(Some(fresh));
                     debug!(sequence = next_sequence, "published new session snapshot");
                 } else {
                     debug!(sequence = next_sequence - 1, "session content unchanged");
@@ -86,6 +94,12 @@ impl SessionStore {
 
     pub(crate) fn current(&self) -> Option<Arc<WorkspaceSnapshot>> {
         self.snapshot.lock().unwrap().clone()
+    }
+
+    /// Subscribe to changed snapshots for one IPC client. The receiver holds
+    /// the most recent snapshot and coalesces bursts safely.
+    pub(crate) fn subscribe(&self) -> watch::Receiver<Option<Arc<WorkspaceSnapshot>>> {
+        self.updates.subscribe()
     }
 
     pub(crate) fn command_socket(&self) -> PathBuf {
