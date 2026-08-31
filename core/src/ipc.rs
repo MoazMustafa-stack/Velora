@@ -25,7 +25,7 @@ use velora_protocol::{
     TelemetrySnapshotError, WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
 };
 
-use crate::session_store::SessionStore;
+use crate::{session_store::SessionStore, telemetry::runtime::TelemetryStore};
 
 pub(crate) async fn serve(
     config: CoreConfig,
@@ -33,6 +33,7 @@ pub(crate) async fn serve(
     launcher: Arc<LaunchService>,
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
+    telemetry: Arc<TelemetryStore>,
 ) -> Result<()> {
     serve_until(
         config,
@@ -40,6 +41,7 @@ pub(crate) async fn serve(
         launcher,
         hyprland_capabilities,
         session,
+        telemetry,
         async {
             tokio::signal::ctrl_c()
                 .await
@@ -55,6 +57,7 @@ async fn serve_until<L, F>(
     launcher: Arc<L>,
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
+    telemetry: Arc<TelemetryStore>,
     shutdown: F,
 ) -> Result<()>
 where
@@ -78,13 +81,15 @@ where
                     let launcher = Arc::clone(&launcher);
                     let hyprland_capabilities = hyprland_capabilities.clone();
                     let session = session.clone();
+                    let telemetry = Arc::clone(&telemetry);
                     tokio::spawn(async move {
-                        if let Err(error) = handle_connection_with_capabilities(
+                        if let Err(error) = handle_connection_with_services(
                             stream,
                             applications,
                             launcher,
                             hyprland_capabilities,
                             session,
+                            telemetry,
                         )
                         .await
                         {
@@ -160,12 +165,35 @@ fn dead_session_store() -> Option<Arc<SessionStore>> {
     ))))
 }
 
+#[cfg(test)]
 async fn handle_connection_with_capabilities<L>(
     stream: UnixStream,
     applications: Arc<[Application]>,
     launcher: Arc<L>,
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
+) -> Result<()>
+where
+    L: ApplicationLauncher + 'static,
+{
+    handle_connection_with_services(
+        stream,
+        applications,
+        launcher,
+        hyprland_capabilities,
+        session,
+        Arc::new(TelemetryStore::default()),
+    )
+    .await
+}
+
+async fn handle_connection_with_services<L>(
+    stream: UnixStream,
+    applications: Arc<[Application]>,
+    launcher: Arc<L>,
+    hyprland_capabilities: HyprlandCapabilities,
+    session: Option<Arc<SessionStore>>,
+    telemetry: Arc<TelemetryStore>,
 ) -> Result<()>
 where
     L: ApplicationLauncher + 'static,
@@ -374,14 +402,19 @@ where
                 )
                 .await
             }
-            Ok(Request::GetTelemetrySnapshot { request_id, .. }) => {
-                Response::TelemetrySnapshotRejected {
+            Ok(Request::GetTelemetrySnapshot { request_id, .. }) => match telemetry.current() {
+                Some(snapshot) => Response::TelemetrySnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    snapshot: (*snapshot).clone(),
+                },
+                None => Response::TelemetrySnapshotRejected {
                     protocol_version: PROTOCOL_VERSION,
                     request_id,
                     code: TelemetrySnapshotError::SnapshotNotReady,
                     retryable: true,
-                }
-            }
+                },
+            },
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -1303,6 +1336,7 @@ mod tests {
                 Arc::clone(&launcher),
                 HyprlandCapabilities::unavailable(),
                 dead_session_store(),
+                Arc::new(TelemetryStore::default()),
                 async move {
                     shutdown_rx.await.context("test shutdown sender dropped")?;
                     Ok(())
