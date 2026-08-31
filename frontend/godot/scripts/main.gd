@@ -9,12 +9,14 @@ const SessionBinding = preload("res://scripts/session_binding.gd")
 
 var menu_open := false
 var map_open := false
+var _stations: Array[Node] = []
 
 func _ready() -> void:
 	player.interaction_changed.connect(hud.set_interaction_prompt)
 	player.interaction_requested.connect(_on_interaction_requested)
 	player.menu_requested.connect(_toggle_menu)
 	for station in get_tree().get_nodes_in_group("application_stations"):
+		_stations.append(station)
 		station.status_changed.connect(_on_station_status_changed)
 	backend.ux_status_changed.connect(_on_backend_ux_status)
 	backend.launch_status_changed.connect(_on_launch_status_changed)
@@ -56,14 +58,23 @@ func _on_session_availability_changed(availability: String) -> void:
 
 func _refresh_station_running_states(snapshot: Dictionary) -> void:
 	var availability: String = backend.session_availability if not snapshot.is_empty() else "unavailable"
-	for station in get_tree().get_nodes_in_group("application_stations"):
+	var station_applications: Array = []
+	for station in _stations:
+		if station.application is Dictionary and not station.application.is_empty():
+			station_applications.append(station.application)
+	var running := SessionBinding.running_applications(
+		station_applications,
+		snapshot.get("windows", [])
+	)
+	for station in _stations:
 		if not station.has_method("apply_running_state"):
 			continue
-		var state: Dictionary = SessionBinding.station_running_state(
+		var state: Dictionary = SessionBinding.station_running_state_from_matches(
 			station.desktop_id,
 			snapshot,
 			availability,
-			station.application
+			station.application,
+			running
 		)
 		station.apply_running_state(
 			String(state["state"]),
@@ -104,7 +115,7 @@ func _on_launch_status_changed(
 	message: String,
 	retryable: bool
 ) -> void:
-	for station in get_tree().get_nodes_in_group("application_stations"):
+	for station in _stations:
 		if "desktop_id" in station and station.desktop_id == desktop_id:
 			station.apply_launch_feedback(stage, message, retryable)
 			return
@@ -130,7 +141,7 @@ func _on_applications_changed(applications: Array) -> void:
 			if not desktop_id.is_empty():
 				applications_by_id[desktop_id] = application
 
-	for station in get_tree().get_nodes_in_group("application_stations"):
+	for station in _stations:
 		if "desktop_id" in station and station.has_method("bind_application"):
 			station.bind_application(applications_by_id.get(station.desktop_id, {}))
 
