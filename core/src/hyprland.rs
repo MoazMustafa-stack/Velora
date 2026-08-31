@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     ffi::OsStr,
     hash::{Hash, Hasher},
@@ -271,22 +271,22 @@ fn normalize_session(
     clients.retain(|client| workspaces.contains_key(&client.window.workspace_handle));
     let mut windows: Vec<Window> = Vec::with_capacity(clients.len());
     let mut window_addresses: HashMap<String, String> = HashMap::with_capacity(clients.len());
-    let mut urgent_workspaces: HashMap<String, ()> = HashMap::new();
+    let mut urgent_workspaces = HashSet::new();
     for client in clients {
         if client.is_urgent {
-            urgent_workspaces.insert(client.window.workspace_handle.clone(), ());
+            urgent_workspaces.insert(client.window.workspace_handle.clone());
         }
         window_addresses.insert(client.window.handle.clone(), client.address);
         windows.push(client.window);
     }
     recompute_workspace_state(&mut workspaces, &windows);
     for workspace in workspaces.values_mut() {
-        workspace.is_urgent = urgent_workspaces.contains_key(&workspace.handle);
+        workspace.is_urgent = urgent_workspaces.contains(&workspace.handle);
     }
     let active_workspace_handle = parse_active_workspace(raw_active_workspace)
         .filter(|handle| workspaces.contains_key(handle));
     let active_window_handle = parse_active_window(raw_active_window)
-        .filter(|handle| windows.iter().any(|window| &window.handle == handle));
+        .filter(|handle| window_addresses.contains_key(handle));
 
     for workspace in workspaces.values_mut() {
         workspace.is_active = active_workspace_handle.as_deref() == Some(workspace.handle.as_str());
