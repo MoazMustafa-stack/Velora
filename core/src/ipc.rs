@@ -591,17 +591,23 @@ fn application_page(
         .min(applications.len());
     let limit = usize::from(limit.clamp(1, MAX_APPLICATION_PAGE_SIZE));
     let requested_end = start.saturating_add(limit).min(applications.len());
+    // Page size is monotonic with the number of entries, so binary-search the
+    // largest transport-safe endpoint instead of cloning and serializing every
+    // intermediate candidate.
     let mut end = start;
-
-    while end < requested_end {
-        let candidate = application_page_response(applications, request_id, start, end + 1, total);
+    let mut upper_bound = requested_end;
+    while end < upper_bound {
+        let candidate_end = end + (upper_bound - end).div_ceil(2);
+        let candidate =
+            application_page_response(applications, request_id, start, candidate_end, total);
         let encoded_size = serde_json::to_vec(&candidate)
             .context("failed to size application page")?
             .len();
-        if encoded_size > MAX_MESSAGE_BYTES {
-            break;
+        if encoded_size <= MAX_MESSAGE_BYTES {
+            end = candidate_end;
+        } else {
+            upper_bound = candidate_end - 1;
         }
-        end += 1;
     }
 
     if end == start && start < requested_end {

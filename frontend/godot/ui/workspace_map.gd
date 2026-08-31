@@ -82,11 +82,13 @@ func set_availability(availability: String) -> void:
 			_title.text = "WORKSPACES // NO HYPRLAND"
 			_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
 			visible_workspaces.clear()
+			selected_index = -1
 			_refresh_grid()
 		"incompatible":
 			_title.text = "WORKSPACES // INCOMPATIBLE"
 			_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
 			visible_workspaces.clear()
+			selected_index = -1
 			_refresh_grid()
 		_:
 			_title.text = "WORKSPACES // WAITING"
@@ -109,7 +111,8 @@ func update_session(snapshot: Dictionary) -> void:
 	)
 	visible_workspaces = workspaces.slice(0, MAX_VISIBLE_WORKSPACES)
 	set_availability("available")
-	_select_index(_default_selection())
+	selected_index = _default_selection()
+	_refresh_grid()
 
 func _default_selection() -> int:
 	for index in range(visible_workspaces.size()):
@@ -120,10 +123,14 @@ func _default_selection() -> int:
 func _select_index(index: int) -> void:
 	if visible_workspaces.is_empty():
 		selected_index = -1
+		return
+	var previous := selected_index
+	selected_index = clampi(index, 0, visible_workspaces.size() - 1)
+	if _cells.size() != visible_workspaces.size():
 		_refresh_grid()
 		return
-	selected_index = clampi(index, 0, visible_workspaces.size() - 1)
-	_refresh_grid()
+	_set_cell_selected(previous, false)
+	_set_cell_selected(selected_index, true)
 
 func _move_selection(step: int) -> void:
 	if visible_workspaces.is_empty():
@@ -135,8 +142,7 @@ func _move_selection(step: int) -> void:
 	var next := selected_index + step
 	while next < 0:
 		next += count
-	selected_index = next % count
-	_refresh_grid()
+	_select_index(next % count)
 
 func _confirm_selection() -> void:
 	if selected_index < 0 or selected_index >= visible_workspaces.size():
@@ -161,9 +167,17 @@ func _refresh_grid() -> void:
 
 	for index in range(visible_workspaces.size()):
 		var workspace := visible_workspaces[index]
-		_grid.add_child(_build_cell(index, workspace))
+		var cell_data := _build_cell(index, workspace)
+		_cells.append(cell_data)
+		_grid.add_child(cell_data["panel"])
 
-func _build_cell(index: int, workspace: Dictionary) -> PanelContainer:
+func _set_cell_selected(index: int, is_selected: bool) -> void:
+	if index < 0 or index >= _cells.size():
+		return
+	var style: StyleBoxFlat = _cells[index]["style"]
+	style.bg_color = CELL_BG_SELECTED if is_selected else CELL_BG
+
+func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 	var is_active := bool(workspace.get("is_active", false))
 	var is_urgent := bool(workspace.get("is_urgent", false))
 	var is_special := bool(workspace.get("is_special", false))
@@ -217,7 +231,7 @@ func _build_cell(index: int, workspace: Dictionary) -> PanelContainer:
 	detail.text_overrun_behavior = 3
 	box.add_child(detail)
 
-	return cell
+	return {"panel": cell, "style": style}
 
 func _build_ui() -> void:
 	var shade := ColorRect.new()
