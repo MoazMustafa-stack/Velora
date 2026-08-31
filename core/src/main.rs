@@ -56,16 +56,18 @@ async fn main() -> Result<()> {
         "Hyprland capability probe completed"
     );
 
-    let session_store = start_session_store(&hyprland_capabilities);
+    let session_runtime = start_session_store(&hyprland_capabilities);
     let result = ipc::serve(
         config,
         applications.into(),
         launcher,
         hyprland_capabilities,
-        session_store,
+        session_runtime
+            .as_ref()
+            .map(|runtime| Arc::clone(&runtime.store)),
     )
     .await;
-    session_shutdown::complete();
+    drop(session_runtime);
     result
 }
 
@@ -73,7 +75,7 @@ async fn main() -> Result<()> {
 /// the background. The shutdown sender is held by Core for its lifetime.
 fn start_session_store(
     capabilities: &velora_protocol::HyprlandCapabilities,
-) -> Option<Arc<session_store::SessionStore>> {
+) -> Option<SessionRuntime> {
     if capabilities.availability != HyprlandAvailability::Available {
         return None;
     }
@@ -86,25 +88,17 @@ fn start_session_store(
         shutdown_rx,
         hyprland_events::ListenerConfig::production(),
     ));
-    session_shutdown::arm(shutdown_tx);
-    Some(store)
+    Some(SessionRuntime { store, shutdown_tx })
 }
 
-/// Process-wide holder for the session-store shutdown sender so the spawned
-/// runner stops cleanly exactly when main returns.
-mod session_shutdown {
-    use std::sync::Mutex;
-    use tokio::sync::watch;
+/// Owns the event-refresh task's shutdown sender for the Core lifetime.
+struct SessionRuntime {
+    store: Arc<session_store::SessionStore>,
+    shutdown_tx: watch::Sender<bool>,
+}
 
-    static SENDER: Mutex<Option<watch::Sender<bool>>> = Mutex::new(None);
-
-    pub(super) fn arm(sender: watch::Sender<bool>) {
-        *SENDER.lock().unwrap() = Some(sender);
-    }
-
-    pub(super) fn complete() {
-        if let Some(sender) = SENDER.lock().unwrap().take() {
-            let _ = sender.send(true);
-        }
+impl Drop for SessionRuntime {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
     }
 }
