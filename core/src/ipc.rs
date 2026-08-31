@@ -34,6 +34,7 @@ pub(crate) async fn serve(
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
     telemetry: Arc<TelemetryStore>,
+    telemetry_enabled: bool,
 ) -> Result<()> {
     serve_until(
         config,
@@ -42,6 +43,7 @@ pub(crate) async fn serve(
         hyprland_capabilities,
         session,
         telemetry,
+        telemetry_enabled,
         async {
             tokio::signal::ctrl_c()
                 .await
@@ -51,6 +53,7 @@ pub(crate) async fn serve(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve_until<L, F>(
     config: CoreConfig,
     applications: Arc<[Application]>,
@@ -58,6 +61,7 @@ async fn serve_until<L, F>(
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
     telemetry: Arc<TelemetryStore>,
+    telemetry_enabled: bool,
     shutdown: F,
 ) -> Result<()>
 where
@@ -90,6 +94,7 @@ where
                             hyprland_capabilities,
                             session,
                             telemetry,
+                            telemetry_enabled,
                         )
                         .await
                         {
@@ -183,6 +188,7 @@ where
         hyprland_capabilities,
         session,
         Arc::new(TelemetryStore::default()),
+        true,
     )
     .await
 }
@@ -194,6 +200,7 @@ async fn handle_connection_with_services<L>(
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
     telemetry: Arc<TelemetryStore>,
+    telemetry_enabled: bool,
 ) -> Result<()>
 where
     L: ApplicationLauncher + 'static,
@@ -401,6 +408,14 @@ where
                     session.as_deref(),
                 )
                 .await
+            }
+            Ok(Request::GetTelemetrySnapshot { request_id, .. }) if !telemetry_enabled => {
+                Response::TelemetrySnapshotRejected {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    code: TelemetrySnapshotError::Disabled,
+                    retryable: false,
+                }
             }
             Ok(Request::GetTelemetrySnapshot { request_id, .. }) => match telemetry.current() {
                 Some(snapshot) => Response::TelemetrySnapshot {
@@ -1337,6 +1352,7 @@ mod tests {
                 HyprlandCapabilities::unavailable(),
                 dead_session_store(),
                 Arc::new(TelemetryStore::default()),
+                true,
                 async move {
                     shutdown_rx.await.context("test shutdown sender dropped")?;
                     Ok(())

@@ -57,6 +57,7 @@ async fn main() -> Result<()> {
     );
 
     let session_runtime = start_session_store(&hyprland_capabilities);
+    let telemetry_enabled = config.telemetry.enabled;
     let telemetry_runtime = start_telemetry_sampler(config.telemetry);
     let result = ipc::serve(
         config,
@@ -67,6 +68,7 @@ async fn main() -> Result<()> {
             .as_ref()
             .map(|runtime| Arc::clone(&runtime.store)),
         Arc::clone(&telemetry_runtime.store),
+        telemetry_enabled,
     )
     .await;
     drop(session_runtime);
@@ -77,11 +79,13 @@ async fn main() -> Result<()> {
 fn start_telemetry_sampler(policy: config::TelemetryPolicy) -> TelemetryRuntime {
     let store = Arc::new(telemetry::runtime::TelemetryStore::default());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    tokio::spawn(telemetry::runtime::run(
-        Arc::clone(&store),
-        policy,
-        shutdown_rx,
-    ));
+    if policy.enabled {
+        tokio::spawn(telemetry::runtime::run(
+            Arc::clone(&store),
+            policy,
+            shutdown_rx,
+        ));
+    }
     TelemetryRuntime { store, shutdown_tx }
 }
 
