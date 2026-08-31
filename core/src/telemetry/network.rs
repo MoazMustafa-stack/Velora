@@ -145,4 +145,27 @@ mod tests {
             (500, 700, 1)
         );
     }
+
+    #[test]
+    fn rejects_bad_entries_and_treats_churn_or_resets_as_zero_rate() {
+        assert_eq!(
+            parse_net_dev("header\nheader\n eth0: not-a-number\n", 4),
+            Err(NetworkParseError::InvalidCounter)
+        );
+        assert_eq!(
+            parse_net_dev("header\nheader\n eth0: 1 2\n", 4),
+            Err(NetworkParseError::MalformedEntry)
+        );
+        let previous = parse_net_dev(
+            "header\nheader\n eth0: 500 0 0 0 0 0 0 0 800 0 0 0 0 0 0 0\n",
+            4,
+        )
+        .unwrap();
+        let current = parse_net_dev("header\nheader\n wlan0: 10 0 0 0 0 0 0 0 20 0 0 0 0 0 0 0\n eth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n", 4).unwrap();
+        let telemetry =
+            calculate_network_telemetry(Some(&previous), &current, Duration::from_secs(1));
+        assert_eq!(telemetry.receive_bytes_per_second, 0);
+        assert_eq!(telemetry.transmit_bytes_per_second, 0);
+        assert_eq!(telemetry.interface_count, 2);
+    }
 }
