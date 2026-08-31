@@ -232,6 +232,7 @@ fn run_worker(
         Err(error) => {
             send_event(
                 &event_sender,
+                &shutdown,
                 WorkerEvent::Disconnected(format!("cannot connect to {}: {error}", path.display())),
             );
             return;
@@ -240,6 +241,7 @@ fn run_worker(
     if let Err(error) = stream.set_read_timeout(Some(SOCKET_POLL_INTERVAL)) {
         send_event(
             &event_sender,
+            &shutdown,
             WorkerEvent::Error {
                 code: "socket_configuration".to_owned(),
                 message: error.to_string(),
@@ -247,7 +249,7 @@ fn run_worker(
         );
         return;
     }
-    send_event(&event_sender, WorkerEvent::Connected);
+    send_event(&event_sender, &shutdown, WorkerEvent::Connected);
     let mut accumulator = LineAccumulator::default();
     let mut read_buffer = [0_u8; 4096];
 
@@ -264,6 +266,7 @@ fn run_worker(
                     {
                         send_event(
                             &event_sender,
+                            &shutdown,
                             WorkerEvent::Disconnected(format!("socket write failed: {error}")),
                         );
                         return;
@@ -278,6 +281,7 @@ fn run_worker(
             Ok(0) => {
                 send_event(
                     &event_sender,
+                    &shutdown,
                     WorkerEvent::Disconnected("core closed the socket".to_owned()),
                 );
                 return;
@@ -285,12 +289,13 @@ fn run_worker(
             Ok(read) => match accumulator.push(&read_buffer[..read]) {
                 Ok(lines) => {
                     for line in lines {
-                        send_event(&event_sender, WorkerEvent::Line(line));
+                        send_event(&event_sender, &shutdown, WorkerEvent::Line(line));
                     }
                 }
                 Err(message) => {
                     send_event(
                         &event_sender,
+                        &shutdown,
                         WorkerEvent::Error {
                             code: "invalid_frame".to_owned(),
                             message: message.to_owned(),
@@ -303,6 +308,7 @@ fn run_worker(
             Err(error) => {
                 send_event(
                     &event_sender,
+                    &shutdown,
                     WorkerEvent::Disconnected(format!("socket read failed: {error}")),
                 );
                 return;
@@ -311,8 +317,22 @@ fn run_worker(
     }
 }
 
-fn send_event(sender: &SyncSender<WorkerEvent>, event: WorkerEvent) {
-    let _ = sender.try_send(event);
+fn send_event(sender: &SyncSender<WorkerEvent>, shutdown: &AtomicBool, event: WorkerEvent) {
+    let mut pending = event;
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        match sender.try_send(pending) {
+            Ok(()) | Err(TrySendError::Disconnected(_)) => return,
+            Err(TrySendError::Full(event)) => {
+                pending = event;
+                // Preserve protocol responses and transport lifecycle events
+                // while still allowing shutdown to interrupt a saturated UI.
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
 }
 
 #[derive(Default)]

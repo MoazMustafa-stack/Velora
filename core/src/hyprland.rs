@@ -91,16 +91,21 @@ async fn probe_with_environment(
         return HyprlandCapabilities::incompatible();
     };
 
-    let can_query_workspaces = query_json(&command_socket, WORKSPACES_REQUEST)
-        .await
-        .is_ok();
-    let can_query_windows = query_json(&command_socket, WINDOWS_REQUEST).await.is_ok();
-    let can_query_active_workspace = query_json(&command_socket, ACTIVE_WORKSPACE_REQUEST)
-        .await
-        .is_ok();
-    let can_query_active_window = query_json(&command_socket, ACTIVE_WINDOW_REQUEST)
-        .await
-        .is_ok();
+    let (
+        can_query_workspaces,
+        can_query_windows,
+        can_query_active_workspace,
+        can_query_active_window,
+    ) = tokio::join!(
+        query_json(&command_socket, WORKSPACES_REQUEST),
+        query_json(&command_socket, WINDOWS_REQUEST),
+        query_json(&command_socket, ACTIVE_WORKSPACE_REQUEST),
+        query_json(&command_socket, ACTIVE_WINDOW_REQUEST),
+    );
+    let can_query_workspaces = can_query_workspaces.is_ok();
+    let can_query_windows = can_query_windows.is_ok();
+    let can_query_active_workspace = can_query_active_workspace.is_ok();
+    let can_query_active_window = can_query_active_window.is_ok();
     let can_receive_events = is_socket(&event_socket);
     let availability = if can_query_workspaces
         && can_query_windows
@@ -229,18 +234,13 @@ pub(crate) async fn read_session(
     command_socket: &Path,
     sequence: u64,
 ) -> Result<SessionReading, AdapterError> {
-    let raw_workspaces = query_json(command_socket, WORKSPACES_REQUEST)
-        .await
-        .map_err(AdapterError::Query)?;
-    let raw_windows = query_json(command_socket, WINDOWS_REQUEST)
-        .await
-        .map_err(AdapterError::Query)?;
-    let raw_active_workspace = query_json(command_socket, ACTIVE_WORKSPACE_REQUEST)
-        .await
-        .map_err(AdapterError::Query)?;
-    let raw_active_window = query_json(command_socket, ACTIVE_WINDOW_REQUEST)
-        .await
-        .map_err(AdapterError::Query)?;
+    let (raw_workspaces, raw_windows, raw_active_workspace, raw_active_window) = tokio::try_join!(
+        query_json(command_socket, WORKSPACES_REQUEST),
+        query_json(command_socket, WINDOWS_REQUEST),
+        query_json(command_socket, ACTIVE_WORKSPACE_REQUEST),
+        query_json(command_socket, ACTIVE_WINDOW_REQUEST),
+    )
+    .map_err(AdapterError::Query)?;
 
     normalize_session(
         sequence,
