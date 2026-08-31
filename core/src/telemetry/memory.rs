@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use thiserror::Error;
 use velora_protocol::{MemoryTelemetry, TelemetryAvailability};
@@ -32,7 +32,6 @@ pub enum MemoryParseError {
 
 pub fn parse_meminfo(input: &str) -> Result<MemoryTelemetry, MemoryParseError> {
     let mut values = HashMap::new();
-    let mut seen = HashSet::new();
 
     for line in input.lines() {
         let Some((key, value)) = line.split_once(':') else {
@@ -40,9 +39,6 @@ pub fn parse_meminfo(input: &str) -> Result<MemoryTelemetry, MemoryParseError> {
         };
         if !INTERESTING_FIELDS.contains(&key) {
             continue;
-        }
-        if !seen.insert(key) {
-            return Err(MemoryParseError::DuplicateField);
         }
         let mut fields = value.split_ascii_whitespace();
         let amount = fields
@@ -53,7 +49,9 @@ pub fn parse_meminfo(input: &str) -> Result<MemoryTelemetry, MemoryParseError> {
         if fields.next() != Some("kB") || fields.next().is_some() {
             return Err(MemoryParseError::InvalidUnit);
         }
-        values.insert(key, amount);
+        if values.insert(key, amount).is_some() {
+            return Err(MemoryParseError::DuplicateField);
+        }
     }
 
     let required = |key: &'static str| {
