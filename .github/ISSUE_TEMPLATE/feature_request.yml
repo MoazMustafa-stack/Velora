@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an idea for Velora
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user-facing problem or gap, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed idea
+      description: Sketch of what you'd like to see. Code sketches welcome but optional.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches or existing workarounds.
+    validations:
+      required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety boundary
+      description: Does this touch the non-destructive Omarchy/Hyprland integration or add IPC?
+      options:
+        - label: "Yes, this changes the desktop integration / IPC surface"
+  - type: textarea
+    id: scope
+    attributes:
+      label: Suggested scope
+      description: Rough estimate of size (small / medium / large) and which Phase it might fit.
+    validations:
+      required: false

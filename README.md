@@ -6,7 +6,10 @@
 
 [![Status: work in progress](https://img.shields.io/badge/status-work_in_progress-f59e0b)](#project-status)
 [![Phase: native IPC](https://img.shields.io/badge/phase-native_IPC-41d6c3)](#current-status)
-[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+[![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-22c55e)](LICENSE)
+[![CI](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml/badge.svg)](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml)
+[![Buy me a coffee](https://img.shields.io/badge/Support-Ko--fi-ff5e5b)](https://ko-fi.com/moazmustafa)
+[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-00457c)](https://paypal.me/MoazMustafa)
 
 Velora is an experimental pixel-art desktop interface for Linux. It runs
 *inside* an existing Omarchy + Hyprland session and represents applications,
@@ -109,6 +112,28 @@ does not modify Omarchy or Hyprland configuration.
 
 ## Contributing
 
-Contributions are welcome once the initial prototype has settled. Please read
-[CONTRIBUTING.md](CONTRIBUTING.md) and report security-sensitive issues using
-[SECURITY.md](SECURITY.md), not a public issue.
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and
+the [Code of Conduct](CODE_OF_CONDUCT.md), then open an issue or pull request.
+Use the issue templates for bug reports and feature requests. Report
+security-sensitive issues using [SECURITY.md](SECURITY.md), not a public issue.
+
+## Support
+
+Velora is free and open source (BSD-3-Clause), and it stays that way — no ads,
+no dark patterns, no paywalled pixels. If it's useful to you or just makes you
+smile, a coffee keeps the pixels flowing and the dev caffeinated:
+
+- [Ko-fi](https://ko-fi.com/moazmustafa)
+- [PayPal](https://paypal.me/MoazMustafa)
+
+Every tip is a mana potion for the project. Thanks for keeping independent,
+open-source tinkering alive. ☕⚔️
+
+## Reuse & attribution
+
+Velora is released under the [BSD-3-Clause](LICENSE) license. You are free to
+use, modify, and redistribute the code, including in commercial projects. As a
+condition of the license, any redistribution (source or binary) must retain the
+copyright notice and license text, so credit to Velora and its contributors is
+always preserved. Where practical, we also appreciate a link back to this
+repository.
