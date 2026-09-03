@@ -5,7 +5,7 @@
 > visual direction, and Linux integrations are expected to change.
 
 [![Status: work in progress](https://img.shields.io/badge/status-work_in_progress-f59e0b)](#project-status)
-[![Phase: native IPC](https://img.shields.io/badge/phase-native_IPC-41d6c3)](#current-status)
+[![Phase: 4 — system telemetry](https://img.shields.io/badge/phase-4_system_telemetry-41d6c3)](#current-status)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-22c55e)](LICENSE)
 [![CI](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml/badge.svg)](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml)
 [![Buy me a coffee](https://img.shields.io/badge/Support-Ko--fi-ff5e5b)](https://ko-fi.com/moazmustafa)
@@ -30,6 +30,9 @@ normal desktop remains available if Velora exits.
 
 ## Current status
 
+Phase 3 is complete. Phase 4 (system telemetry) is code-complete and being
+actively developed and merged.
+
 Phase 1.01–1.10 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
 hub, eight-direction movement with four-direction facing, sprinting, physical
 room and object boundaries, and facing-aware application stations. A working
@@ -42,6 +45,21 @@ and parses XDG desktop entries, then sends the filtered application registry to
 Godot in bounded pages. Application launches are requested by desktop ID only;
 Core re-parses the registered desktop entry and applies its safety policy before
 it can create a process.
+
+Phase 3 adds a read-only Hyprland integration over protocol v3. Core probes
+Hyprland capabilities without reading configuration or shelling out, normalizes
+raw compositor output into validated workspace/window snapshots, and serves live
+snapshots over IPC. The Godot frontend renders a keyboard-driven workspace map,
+binds application stations to running state conservatively, and switches
+workspaces and focuses windows in a fail-closed way using opaque handles —
+never via raw commands.
+
+Phase 4 adds a bounded system-telemetry service over protocol v4. A resource-safe
+sampler reads CPU, memory, disk, and network activity from `/proc` and
+`/sys/class/net`, caches the latest values, and publishes them to an observatory
+HUD in the frontend. All sampling honors a user-facing privacy toggle
+(`VELORA_TELEMETRY_ENABLED`), and the Phase 4 release gate enforces strict
+CPU/RSS budgets so idle telemetry stays near zero cost.
 
 ## Run
 
@@ -72,7 +90,7 @@ The unified development runner exposes the common workflows:
 ./scripts/velora.sh build-bridge  # compile the Rust GDExtension
 ./scripts/velora.sh ipc-check     # live core ↔ Godot handshake test
 ./scripts/velora.sh check         # Godot acceptance tests + Rust workspace
-./scripts/velora.sh gate          # deterministic Phase 2 security/release checks
+./scripts/velora.sh gate          # deterministic security/release checks
 ./scripts/velora.sh perf          # rendered integrated-GPU benchmark
 ./scripts/velora.sh all           # all automated and rendered checks
 ```
