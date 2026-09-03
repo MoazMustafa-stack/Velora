@@ -141,8 +141,16 @@ Velora is free and open source (BSD-3-Clause), and it stays that way — no ads,
 no dark patterns, no paywalled pixels. If it's useful to you or just makes you
 smile, a coffee keeps the pixels flowing and the dev caffeinated:
 
-- [Ko-fi](https://ko-fi.com/moazmustafa)
-- [PayPal](https://paypal.me/MoazMustafa)
+<p align="center">
+  <a href="https://ko-fi.com/moazmustafa">
+    <img alt="Support me on Ko-fi" height="48"
+         src="https://img.shields.io/static/v1?label=Support%20me%20on&message=Ko-fi&color=ff5e5b&style=for-the-badge&logo=kofi&labelColor=46483e" />
+  </a>
+  <a href="https://paypal.me/MoazMustafa">
+    <img alt="Donate via PayPal" height="48"
+         src="https://img.shields.io/static/v1?label=Donate%20via&message=PayPal&color=00457c&style=for-the-badge&logo=paypal&labelColor=0a1f44" />
+  </a>
+</p>
 
 Every tip is a mana potion for the project. Thanks for keeping independent,
 open-source tinkering alive. ☕⚔️
