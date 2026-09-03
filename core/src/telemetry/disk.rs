@@ -239,6 +239,10 @@ mod tests {
             "md1",
             "../sda",
             "sda/evil",
+            "",
+            "nvme",
+            "mmcblk",
+            "xvda1",
         ] {
             assert!(
                 !is_allowed_whole_device(name),
@@ -302,5 +306,16 @@ mod tests {
         assert_eq!(telemetry.read_bytes_per_second, 0);
         assert_eq!(telemetry.write_bytes_per_second, 0);
         assert_eq!(telemetry.device_count, 2);
+    }
+
+    #[test]
+    fn saturates_rate_when_sectors_approach_u128_boundary() {
+        let previous = snapshot(&[("sda", 0, 0)]);
+        let current = snapshot(&[("sda", u64::MAX, u64::MAX)]);
+        let telemetry =
+            calculate_disk_telemetry(Some(&previous), &current, Duration::from_millis(1));
+        assert_eq!(telemetry.availability, TelemetryAvailability::Available);
+        assert_eq!(telemetry.read_bytes_per_second, u64::MAX);
+        assert_eq!(telemetry.write_bytes_per_second, u64::MAX);
     }
 }

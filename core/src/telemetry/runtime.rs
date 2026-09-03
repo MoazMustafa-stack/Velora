@@ -105,3 +105,81 @@ async fn sample(
     previous.network = Some(network_counters);
     Ok(snapshot)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use velora_protocol::{
+        CpuTelemetry, DiskTelemetry, MemoryTelemetry, NetworkTelemetry, TelemetryAvailability,
+    };
+
+    fn test_snapshot(sequence: u64) -> TelemetrySnapshot {
+        TelemetrySnapshot {
+            sequence,
+            sampled_at_unix_ms: 1_777_777_777_000,
+            sample_interval_ms: 1_000,
+            cpu: CpuTelemetry {
+                availability: TelemetryAvailability::Available,
+                utilization_basis_points: Some(3_725),
+                logical_cpu_count: 8,
+                load_1m_milli: 750,
+                load_5m_milli: 1_250,
+                load_15m_milli: 2_000,
+            },
+            memory: MemoryTelemetry {
+                availability: TelemetryAvailability::Available,
+                total_bytes: 16 * 1024 * 1024 * 1024,
+                available_bytes: 10 * 1024 * 1024 * 1024,
+                used_bytes: 6 * 1024 * 1024 * 1024,
+                cached_bytes: 2 * 1024 * 1024 * 1024,
+                swap_total_bytes: 4 * 1024 * 1024 * 1024,
+                swap_used_bytes: 512 * 1024 * 1024,
+            },
+            disk: DiskTelemetry {
+                availability: TelemetryAvailability::Available,
+                read_bytes_per_second: 1_048_576,
+                write_bytes_per_second: 524_288,
+                device_count: 2,
+            },
+            network: NetworkTelemetry {
+                availability: TelemetryAvailability::WarmingUp,
+                receive_bytes_per_second: 0,
+                transmit_bytes_per_second: 0,
+                interface_count: 1,
+            },
+        }
+    }
+
+    #[test]
+    fn store_starts_empty() {
+        let store = TelemetryStore::default();
+        assert!(store.current().is_none());
+    }
+
+    #[test]
+    fn publish_makes_current_available() {
+        let store = TelemetryStore::default();
+        store.publish(test_snapshot(1));
+        let current = store.current().unwrap();
+        assert_eq!(current.sequence, 1);
+        assert_eq!(current.cpu.logical_cpu_count, 8);
+    }
+
+    #[test]
+    fn publish_overwrites_previous() {
+        let store = TelemetryStore::default();
+        store.publish(test_snapshot(1));
+        store.publish(test_snapshot(2));
+        let current = store.current().unwrap();
+        assert_eq!(current.sequence, 2);
+    }
+
+    #[test]
+    fn published_snapshot_is_shared_arc() {
+        let store = TelemetryStore::default();
+        store.publish(test_snapshot(5));
+        let first = store.current().unwrap();
+        let second = store.current().unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+}

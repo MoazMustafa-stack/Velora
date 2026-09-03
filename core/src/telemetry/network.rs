@@ -168,4 +168,42 @@ mod tests {
         assert_eq!(telemetry.transmit_bytes_per_second, 0);
         assert_eq!(telemetry.interface_count, 2);
     }
+
+    #[test]
+    fn returns_offline_when_previous_exists_but_current_is_empty() {
+        let previous = parse_net_dev(
+            "header\nheader\n wlan0: 500 0 0 0 0 0 0 0 800 0 0 0 0 0 0 0\n",
+            4,
+        )
+        .unwrap();
+        let current = parse_net_dev("header\nheader\n lo: 99 0 0 0 0 0 0 0 99 0 0 0 0 0 0 0\n", 4)
+            .unwrap();
+        let telemetry =
+            calculate_network_telemetry(Some(&previous), &current, Duration::from_secs(1));
+        assert_eq!(telemetry.availability, TelemetryAvailability::Offline);
+        assert_eq!(telemetry.receive_bytes_per_second, 0);
+        assert_eq!(telemetry.transmit_bytes_per_second, 0);
+        assert_eq!(telemetry.interface_count, 0);
+    }
+
+    #[test]
+    fn saturates_rate_when_bytes_approach_u64_boundary() {
+        let previous = parse_net_dev(
+            "header\nheader\n eth0: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
+            4,
+        )
+        .unwrap();
+        let current = parse_net_dev(
+            &format!(
+                "header\nheader\n eth0: {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
+                u64::MAX
+            ),
+            4,
+        )
+        .unwrap();
+        let telemetry =
+            calculate_network_telemetry(Some(&previous), &current, Duration::from_nanos(1));
+        assert_eq!(telemetry.availability, TelemetryAvailability::Available);
+        assert_eq!(telemetry.receive_bytes_per_second, u64::MAX);
+    }
 }

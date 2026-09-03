@@ -119,4 +119,28 @@ mod tests {
             assert!(TelemetryPolicy::from_interval_text(Some(value)).is_err());
         }
     }
+
+    #[test]
+    fn enabled_env_var_defaults_to_true() {
+        let policy = TelemetryPolicy::from_interval_text(None).unwrap();
+        assert!(policy.enabled);
+    }
+
+    #[test]
+    fn enabled_env_var_parses_true_and_false() {
+        unsafe {
+            env::set_var(TELEMETRY_ENABLED_ENV, "true");
+            let policy = TelemetryPolicy::from_environment().unwrap();
+            assert!(policy.enabled);
+
+            env::set_var(TELEMETRY_ENABLED_ENV, "false");
+            let policy = TelemetryPolicy::from_environment().unwrap();
+            assert!(!policy.enabled);
+
+            env::set_var(TELEMETRY_ENABLED_ENV, "maybe");
+            assert!(TelemetryPolicy::from_environment().is_err());
+
+            env::remove_var(TELEMETRY_ENABLED_ENV);
+        }
+    }
 }

@@ -1508,6 +1508,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_telemetry_request_when_disabled() {
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            false,
+        ));
+        let mut reader = BufReader::new(client);
+
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetTelemetrySnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 94,
+                },
+            )
+            .await,
+            Response::TelemetrySnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 94,
+                code: TelemetrySnapshotError::Disabled,
+                retryable: false,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn serves_live_workspace_snapshots_from_the_session_store() {
         use crate::hyprland::{
             ACTIVE_WINDOW_REQUEST, ACTIVE_WORKSPACE_REQUEST, COMMAND_SOCKET_NAME, WINDOWS_REQUEST,

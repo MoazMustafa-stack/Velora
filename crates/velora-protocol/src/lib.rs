@@ -844,6 +844,54 @@ mod tests {
         };
         let json = serde_json::to_string(&rejected).unwrap();
         assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), rejected);
+
+        let sampler_unavailable = Response::TelemetrySnapshotRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 43,
+            code: TelemetrySnapshotError::SamplerUnavailable,
+            retryable: true,
+        };
+        let json = serde_json::to_string(&sampler_unavailable).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Response>(&json).unwrap(),
+            sampler_unavailable
+        );
+
+        let disabled = Response::TelemetrySnapshotRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 44,
+            code: TelemetrySnapshotError::Disabled,
+            retryable: false,
+        };
+        let json = serde_json::to_string(&disabled).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), disabled);
+    }
+
+    #[test]
+    fn max_width_snapshot_stays_under_payload_limit_and_validates() {
+        let mut snapshot = test_telemetry_snapshot();
+        snapshot.disk.device_count = MAX_TELEMETRY_DEVICES;
+        snapshot.network.interface_count = MAX_TELEMETRY_INTERFACES;
+        snapshot.cpu.utilization_basis_points = Some(10_000);
+        snapshot.disk.read_bytes_per_second = u64::MAX;
+        snapshot.disk.write_bytes_per_second = u64::MAX;
+        snapshot.network.receive_bytes_per_second = u64::MAX;
+        snapshot.network.transmit_bytes_per_second = u64::MAX;
+        snapshot.memory.total_bytes = u64::MAX;
+        snapshot.memory.available_bytes = u64::MAX - 1;
+        snapshot.memory.used_bytes = 1;
+        snapshot.memory.cached_bytes = u64::MAX / 2;
+        snapshot.memory.swap_total_bytes = u64::MAX;
+        snapshot.memory.swap_used_bytes = u64::MAX - 1;
+
+        assert!(snapshot.validate().is_ok());
+        let snapshot_response = Response::TelemetrySnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 50,
+            snapshot,
+        };
+        let json = serde_json::to_string(&snapshot_response).unwrap();
+        assert!(json.len() <= MAX_TELEMETRY_PAYLOAD_BYTES);
     }
 
     #[test]
