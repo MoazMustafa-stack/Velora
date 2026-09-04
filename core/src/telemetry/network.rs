@@ -176,8 +176,11 @@ mod tests {
             4,
         )
         .unwrap();
-        let current = parse_net_dev("header\nheader\n lo: 99 0 0 0 0 0 0 0 99 0 0 0 0 0 0 0\n", 4)
-            .unwrap();
+        let current = parse_net_dev(
+            "header\nheader\n lo: 99 0 0 0 0 0 0 0 99 0 0 0 0 0 0 0\n",
+            4,
+        )
+        .unwrap();
         let telemetry =
             calculate_network_telemetry(Some(&previous), &current, Duration::from_secs(1));
         assert_eq!(telemetry.availability, TelemetryAvailability::Offline);
