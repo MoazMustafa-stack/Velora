@@ -6,6 +6,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_dir="$(cd "$script_dir/.." && pwd)"
 cd "$repo_dir"
 
+cargo fmt --all --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 "$script_dir/check-godot.sh"
