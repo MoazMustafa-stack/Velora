@@ -5,7 +5,7 @@
 > visual direction, and Linux integrations are expected to change.
 
 [![Status: work in progress](https://img.shields.io/badge/status-work_in_progress-f59e0b)](#project-status)
-[![Phase: 4 — system telemetry](https://img.shields.io/badge/phase-4_system_telemetry-41d6c3)](#current-status)
+[![Phase: 4 complete](https://img.shields.io/badge/phase-4_complete-22c55e)](#current-status)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-22c55e)](LICENSE)
 [![CI](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml/badge.svg)](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml)
 [![Buy me a coffee](https://img.shields.io/badge/Support-Ko--fi-ff5e5b)](https://ko-fi.com/moazmustafa)
@@ -30,8 +30,8 @@ normal desktop remains available if Velora exits.
 
 ## Current status
 
-Phase 3 is complete. Phase 4 (system telemetry) is code-complete and being
-actively developed and merged.
+Phase 3 is complete. Phase 4 (system telemetry) is complete and merged to
+`main` via PR #7.
 
 Phase 1.01–1.10 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
 hub, eight-direction movement with four-direction facing, sprinting, physical
