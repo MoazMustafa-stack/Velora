@@ -7,6 +7,7 @@ mod hyprland_integration;
 mod ipc;
 mod launch;
 mod session_store;
+pub mod telemetry;
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -45,28 +46,54 @@ async fn main() -> Result<()> {
     }
     info!(socket = %config.socket_path.display(), "Velora Core starting");
     info!(
+        telemetry_interval_ms = config.telemetry.interval.as_millis(),
+        telemetry_max_devices = config.telemetry.max_devices,
+        telemetry_max_interfaces = config.telemetry.max_interfaces,
+        "telemetry sampling policy resolved"
+    );
+    info!(
         ?hyprland_capabilities,
         "Hyprland capability probe completed"
     );
 
-    let session_store = start_session_store(&hyprland_capabilities);
+    let session_runtime = start_session_store(&hyprland_capabilities);
+    let telemetry_enabled = config.telemetry.enabled;
+    let telemetry_runtime = start_telemetry_sampler(config.telemetry);
     let result = ipc::serve(
         config,
         applications.into(),
         launcher,
         hyprland_capabilities,
-        session_store,
+        session_runtime
+            .as_ref()
+            .map(|runtime| Arc::clone(&runtime.store)),
+        Arc::clone(&telemetry_runtime.store),
+        telemetry_enabled,
     )
     .await;
-    session_shutdown::complete();
+    drop(session_runtime);
+    drop(telemetry_runtime);
     result
+}
+
+fn start_telemetry_sampler(policy: config::TelemetryPolicy) -> TelemetryRuntime {
+    let store = Arc::new(telemetry::runtime::TelemetryStore::default());
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    if policy.enabled {
+        tokio::spawn(telemetry::runtime::run(
+            Arc::clone(&store),
+            policy,
+            shutdown_rx,
+        ));
+    }
+    TelemetryRuntime { store, shutdown_tx }
 }
 
 /// When Hyprland is fully available, keep an authoritative snapshot warm in
 /// the background. The shutdown sender is held by Core for its lifetime.
 fn start_session_store(
     capabilities: &velora_protocol::HyprlandCapabilities,
-) -> Option<Arc<session_store::SessionStore>> {
+) -> Option<SessionRuntime> {
     if capabilities.availability != HyprlandAvailability::Available {
         return None;
     }
@@ -79,25 +106,28 @@ fn start_session_store(
         shutdown_rx,
         hyprland_events::ListenerConfig::production(),
     ));
-    session_shutdown::arm(shutdown_tx);
-    Some(store)
+    Some(SessionRuntime { store, shutdown_tx })
 }
 
-/// Process-wide holder for the session-store shutdown sender so the spawned
-/// runner stops cleanly exactly when main returns.
-mod session_shutdown {
-    use std::sync::Mutex;
-    use tokio::sync::watch;
+/// Owns the event-refresh task's shutdown sender for the Core lifetime.
+struct SessionRuntime {
+    store: Arc<session_store::SessionStore>,
+    shutdown_tx: watch::Sender<bool>,
+}
 
-    static SENDER: Mutex<Option<watch::Sender<bool>>> = Mutex::new(None);
-
-    pub(super) fn arm(sender: watch::Sender<bool>) {
-        *SENDER.lock().unwrap() = Some(sender);
+impl Drop for SessionRuntime {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
     }
+}
 
-    pub(super) fn complete() {
-        if let Some(sender) = SENDER.lock().unwrap().take() {
-            let _ = sender.send(true);
-        }
+struct TelemetryRuntime {
+    store: Arc<telemetry::runtime::TelemetryStore>,
+    shutdown_tx: watch::Sender<bool>,
+}
+
+impl Drop for TelemetryRuntime {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
     }
 }

@@ -16,6 +16,8 @@ signal switch_accepted(workspace_handle: String)
 signal switch_rejected(workspace_handle: String, code: String, message: String, retryable: bool)
 signal focus_accepted(window_handle: String)
 signal focus_rejected(window_handle: String, code: String, message: String, retryable: bool)
+signal telemetry_snapshot_changed(snapshot: Dictionary)
+signal telemetry_availability_changed(availability: String)
 
 enum ConnectionState {
 	DISCONNECTED,
@@ -26,7 +28,7 @@ enum ConnectionState {
 	INCOMPATIBLE,
 }
 
-const PROTOCOL_VERSION := 3
+const PROTOCOL_VERSION := 4
 const CLIENT_NAME := "velora-godot"
 const CLIENT_VERSION := "0.2.0"
 const PING_INTERVAL_SECONDS := 5.0
@@ -38,6 +40,7 @@ const MAX_SESSION_WORKSPACES := 128
 const MAX_SESSION_WINDOWS := 1024
 const SWITCH_TIMEOUT_SECONDS := 5.0
 const FOCUS_TIMEOUT_SECONDS := 5.0
+const TELEMETRY_POLL_SECONDS := 1.0
 
 @export var auto_connect := true
 
@@ -55,6 +58,8 @@ var applications: Array[Dictionary] = []
 # world keeps showing stale-but-labelled workspaces instead of going blank.
 var session_snapshot: Dictionary = {}
 var session_availability := "unknown"
+var telemetry_snapshot: Dictionary = {}
+var telemetry_availability := "unknown"
 
 var _bridge: Node
 var _socket_path := ""
@@ -79,6 +84,8 @@ var _switch_elapsed := 0.0
 var _focus_request_id := 0
 var _focus_handle := ""
 var _focus_elapsed := 0.0
+var _telemetry_request_id := 0
+var _telemetry_elapsed := 0.0
 
 func _ready() -> void:
 	_bridge = bridge_override
@@ -114,6 +121,7 @@ func _process(delta: float) -> void:
 	elif state == ConnectionState.READY:
 		_update_launch_timeout(delta)
 		_update_heartbeat(delta)
+		_update_telemetry_poll(delta)
 
 func connect_to_core() -> void:
 	_reconnect_index = 0
@@ -183,6 +191,23 @@ func request_hyprland_capabilities() -> bool:
 		"protocol_version": PROTOCOL_VERSION,
 		"request_id": _take_request_id(),
 	})
+
+func request_telemetry_snapshot() -> bool:
+	if state != ConnectionState.READY or _telemetry_request_id != 0:
+		return false
+	var request_id := _take_request_id()
+	_telemetry_request_id = request_id
+	return _send_message({
+		"type": "get_telemetry_snapshot",
+		"protocol_version": PROTOCOL_VERSION,
+		"request_id": request_id,
+	})
+
+func _update_telemetry_poll(delta: float) -> void:
+	_telemetry_elapsed += delta
+	if _telemetry_elapsed >= TELEMETRY_POLL_SECONDS:
+		_telemetry_elapsed = 0.0
+		request_telemetry_snapshot()
 
 func request_switch_workspace(workspace_handle: String) -> bool:
 	if state != ConnectionState.READY:
@@ -333,6 +358,7 @@ func _on_line_received(payload: String) -> void:
 			_set_state(ConnectionState.READY, "CORE // READY")
 			request_applications()
 			request_hyprland_capabilities()
+			request_telemetry_snapshot()
 			if session_snapshot.is_empty():
 				# Only the first fetch is client-driven; later refreshes are
 				# Core's event-driven snapshots arriving unprompted or a
@@ -352,6 +378,10 @@ func _on_line_received(payload: String) -> void:
 			_on_workspace_snapshot(message)
 		"workspace_snapshot_rejected":
 			_on_workspace_snapshot_rejected(message)
+		"telemetry_snapshot":
+			_on_telemetry_snapshot(message)
+		"telemetry_snapshot_rejected":
+			_on_telemetry_snapshot_rejected(message)
 		"switch_accepted":
 			var request_id := int(message.get("request_id", 0))
 			if request_id != _switch_request_id:
@@ -423,11 +453,10 @@ func _update_heartbeat(delta: float) -> void:
 		request_ping()
 
 func _update_launch_timeout(delta: float) -> void:
-	if _launch_request_id == 0:
-		return
-	_launch_elapsed += delta
-	if _launch_elapsed >= LAUNCH_TIMEOUT_SECONDS:
-		_fail_pending_launch("launch_timeout", true)
+	if _launch_request_id != 0:
+		_launch_elapsed += delta
+		if _launch_elapsed >= LAUNCH_TIMEOUT_SECONDS:
+			_fail_pending_launch("launch_timeout", true)
 	if _switch_request_id != 0:
 		_switch_elapsed += delta
 		if _switch_elapsed >= SWITCH_TIMEOUT_SECONDS:
@@ -635,6 +664,33 @@ func _on_workspace_snapshot_rejected(message: Dictionary) -> void:
 			pass
 		_:
 			pass
+
+func _on_telemetry_snapshot(message: Dictionary) -> void:
+	var request_id := int(message.get("request_id", 0))
+	if request_id != _telemetry_request_id:
+		return
+	_telemetry_request_id = 0
+	var snapshot = message.get("snapshot", null)
+	if not snapshot is Dictionary or int(snapshot.get("sequence", 0)) <= int(telemetry_snapshot.get("sequence", 0)):
+		return
+	for key in ["cpu", "memory", "disk", "network"]:
+		if not snapshot.get(key, null) is Dictionary:
+			return
+	telemetry_snapshot = snapshot
+	_set_telemetry_availability("available")
+	telemetry_snapshot_changed.emit(snapshot)
+
+func _on_telemetry_snapshot_rejected(message: Dictionary) -> void:
+	if int(message.get("request_id", 0)) != _telemetry_request_id:
+		return
+	_telemetry_request_id = 0
+	_set_telemetry_availability("waiting")
+
+func _set_telemetry_availability(availability: String) -> void:
+	if telemetry_availability == availability:
+		return
+	telemetry_availability = availability
+	telemetry_availability_changed.emit(availability)
 
 func _set_session_availability(availability: String) -> void:
 	if availability == session_availability:

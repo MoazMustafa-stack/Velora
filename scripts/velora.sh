@@ -19,7 +19,7 @@ Commands:
   build-bridge  Build the native Unix-socket GDExtension
   ipc-check     Run the live core ↔ Godot handshake test
   check         Run Godot acceptance tests and Rust checks
-  gate          Run all deterministic Phase 2 release gates
+  gate          Run the deterministic Phase 4 release gate
   perf          Run the rendered integrated-graphics benchmark
   all           Run acceptance, Rust, IPC, and performance checks
   help          Show this help
@@ -64,10 +64,7 @@ case "$command_name" in
     "$script_dir/check-dev.sh"
     ;;
   gate)
-    "$script_dir/velora.sh" check
-    "$script_dir/check-ipc.sh"
-    "$script_dir/check-security.sh"
-    "$script_dir/check-core-resources.sh"
+    exec "$script_dir/check-phase-four.sh"
     ;;
   perf|performance)
     "$script_dir/build-bridge.sh"

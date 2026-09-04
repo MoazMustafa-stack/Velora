@@ -5,10 +5,7 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::Instant,
 };
 use tokio::sync::{mpsc, watch};
@@ -28,55 +25,65 @@ pub(crate) struct StoreHealth {
 
 pub(crate) struct SessionStore {
     command_socket: PathBuf,
-    sequence: AtomicU64,
-    snapshot: Mutex<Option<Arc<WorkspaceSnapshot>>>,
+    state: Mutex<SessionState>,
+    /// Latest changed snapshot for IPC clients. `watch` deliberately
+    /// coalesces intermediate changes: clients only need the newest
+    /// authoritative state and the sequence fences stale data.
+    updates: watch::Sender<Option<Arc<WorkspaceSnapshot>>>,
     // Core-private handle -> compositor address mapping for focus requests.
     // Never serialized to any frontend.
-    window_addresses: Mutex<HashMap<String, String>>,
-    health: Mutex<StoreHealth>,
+}
+
+#[derive(Default)]
+struct SessionState {
+    sequence: u64,
+    snapshot: Option<Arc<WorkspaceSnapshot>>,
+    window_addresses: HashMap<String, String>,
+    health: StoreHealth,
 }
 
 impl SessionStore {
     pub(crate) fn new(command_socket: PathBuf) -> Self {
+        let (updates, _) = watch::channel(None);
         Self {
             command_socket,
-            sequence: AtomicU64::new(0),
-            snapshot: Mutex::new(None),
-            window_addresses: Mutex::new(HashMap::new()),
-            health: Mutex::new(StoreHealth::default()),
+            state: Mutex::new(SessionState::default()),
+            updates,
         }
     }
 
     /// Query the compositor for a fresh authoritative snapshot. Identical
     /// content keeps the existing sequence so clients see no change.
     pub(crate) async fn refresh(&self) -> Result<(), crate::hyprland::AdapterError> {
-        let next_sequence = self.sequence.load(Ordering::SeqCst) + 1;
+        let next_sequence = self.state.lock().unwrap().sequence + 1;
         match read_session(&self.command_socket, next_sequence).await {
             Ok(reading) => {
                 let fresh = reading.snapshot;
-                let mut stored = self.snapshot.lock().unwrap();
-                let changed = stored
+                let mut state = self.state.lock().unwrap();
+                let changed = state
+                    .snapshot
                     .as_ref()
                     .is_none_or(|current| !content_eq(current, &fresh));
                 if changed {
-                    self.sequence.store(next_sequence, Ordering::SeqCst);
-                    *stored = Some(Arc::new(fresh));
-                    *self.window_addresses.lock().unwrap() = reading.window_addresses;
+                    state.sequence = next_sequence;
+                    let fresh = Arc::new(fresh);
+                    state.snapshot = Some(Arc::clone(&fresh));
+                    state.window_addresses = reading.window_addresses;
+                    self.updates.send_replace(Some(fresh));
                     debug!(sequence = next_sequence, "published new session snapshot");
                 } else {
                     debug!(sequence = next_sequence - 1, "session content unchanged");
                 }
-                let mut health = self.health.lock().unwrap();
-                health.has_state = true;
-                health.successful_refreshes += 1;
-                health.last_success = Some(Instant::now());
-                health.last_error = None;
+                state.health.has_state = true;
+                state.health.successful_refreshes += 1;
+                state.health.last_success = Some(Instant::now());
+                state.health.last_error = None;
                 Ok(())
             }
             Err(error) => {
-                let mut health = self.health.lock().unwrap();
-                health.failed_refreshes += 1;
-                health.last_error = Some(error.to_string());
+                let mut state = self.state.lock().unwrap();
+                state.health.failed_refreshes += 1;
+                state.health.last_error = Some(error.to_string());
                 // The last good snapshot is intentionally retained so the
                 // frontend can keep showing stale-but-labelled state.
                 Err(error)
@@ -85,7 +92,13 @@ impl SessionStore {
     }
 
     pub(crate) fn current(&self) -> Option<Arc<WorkspaceSnapshot>> {
-        self.snapshot.lock().unwrap().clone()
+        self.state.lock().unwrap().snapshot.clone()
+    }
+
+    /// Subscribe to changed snapshots for one IPC client. The receiver holds
+    /// the most recent snapshot and coalesces bursts safely.
+    pub(crate) fn subscribe(&self) -> watch::Receiver<Option<Arc<WorkspaceSnapshot>>> {
+        self.updates.subscribe()
     }
 
     pub(crate) fn command_socket(&self) -> PathBuf {
@@ -95,13 +108,18 @@ impl SessionStore {
     /// Resolve a previously issued opaque handle to its compositor address.
     /// Returns None for unknown or stale handles; callers must fail closed.
     pub(crate) fn resolve_window_address(&self, handle: &str) -> Option<String> {
-        self.window_addresses.lock().unwrap().get(handle).cloned()
+        self.state
+            .lock()
+            .unwrap()
+            .window_addresses
+            .get(handle)
+            .cloned()
     }
 
     // Consumed by diagnostics/UX from P3.06 onward.
     #[allow(dead_code)]
     pub(crate) fn health(&self) -> StoreHealth {
-        self.health.lock().unwrap().clone()
+        self.state.lock().unwrap().health.clone()
     }
 
     /// Consume coalesced invalidation signals forever. Each signal triggers

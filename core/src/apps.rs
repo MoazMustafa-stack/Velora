@@ -51,11 +51,8 @@ fn load_applications_with_locales(
         .filter_map(|desktop_file| parse_application(desktop_file, locales))
         .collect::<Vec<_>>();
 
-    applications.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
-            .then_with(|| left.id.cmp(&right.id))
+    applications.sort_by_cached_key(|application| {
+        (application.name.to_lowercase(), application.id.clone())
     });
     applications
 }

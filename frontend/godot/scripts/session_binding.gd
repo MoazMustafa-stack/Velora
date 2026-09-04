@@ -71,8 +71,28 @@ static func station_running_state(
 		return {"state": STATE_UNKNOWN, "location": "", "windows": 0}
 
 	var running := running_applications([bound_application], snapshot.get("windows", []))
+	return station_running_state_from_matches(
+		desktop_id,
+		snapshot,
+		availability,
+		bound_application,
+		running
+	)
+
+## Reuse one snapshot-wide application match map across every station.
+static func station_running_state_from_matches(
+	desktop_id: String,
+	snapshot: Dictionary,
+	availability: String,
+	bound_application: Dictionary,
+	running: Dictionary
+) -> Dictionary:
+	if availability != "available" or snapshot.is_empty() or bound_application.is_empty():
+		return {"state": STATE_UNKNOWN, "location": "", "windows": 0}
 	if not running.is_empty():
-		var match: Dictionary = running[desktop_id]
+		var match: Dictionary = running.get(desktop_id, {})
+		if match.is_empty():
+			return {"state": STATE_NOT_RUNNING, "location": "", "windows": 0}
 		var workspace_name := _workspace_name(snapshot, String(match["workspace_handle"]))
 		return {
 			"state": STATE_RUNNING,

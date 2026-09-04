@@ -15,16 +15,17 @@ use std::{
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
+    sync::watch,
     time::timeout,
 };
 use tracing::{info, warn};
 use velora_protocol::{
     Application, HANDSHAKE_TIMEOUT_SECONDS, HyprlandAvailability, HyprlandCapabilities,
     MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, Request, Response, SERVER_NAME,
-    WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
+    TelemetrySnapshotError, WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
 };
 
-use crate::session_store::SessionStore;
+use crate::{session_store::SessionStore, telemetry::runtime::TelemetryStore};
 
 pub(crate) async fn serve(
     config: CoreConfig,
@@ -32,6 +33,8 @@ pub(crate) async fn serve(
     launcher: Arc<LaunchService>,
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
+    telemetry: Arc<TelemetryStore>,
+    telemetry_enabled: bool,
 ) -> Result<()> {
     serve_until(
         config,
@@ -39,6 +42,8 @@ pub(crate) async fn serve(
         launcher,
         hyprland_capabilities,
         session,
+        telemetry,
+        telemetry_enabled,
         async {
             tokio::signal::ctrl_c()
                 .await
@@ -48,12 +53,15 @@ pub(crate) async fn serve(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve_until<L, F>(
     config: CoreConfig,
     applications: Arc<[Application]>,
     launcher: Arc<L>,
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
+    telemetry: Arc<TelemetryStore>,
+    telemetry_enabled: bool,
     shutdown: F,
 ) -> Result<()>
 where
@@ -77,13 +85,16 @@ where
                     let launcher = Arc::clone(&launcher);
                     let hyprland_capabilities = hyprland_capabilities.clone();
                     let session = session.clone();
+                    let telemetry = Arc::clone(&telemetry);
                     tokio::spawn(async move {
-                        if let Err(error) = handle_connection_with_capabilities(
+                        if let Err(error) = handle_connection_with_services(
                             stream,
                             applications,
                             launcher,
                             hyprland_capabilities,
                             session,
+                            telemetry,
+                            telemetry_enabled,
                         )
                         .await
                         {
@@ -159,12 +170,37 @@ fn dead_session_store() -> Option<Arc<SessionStore>> {
     ))))
 }
 
+#[cfg(test)]
 async fn handle_connection_with_capabilities<L>(
     stream: UnixStream,
     applications: Arc<[Application]>,
     launcher: Arc<L>,
     hyprland_capabilities: HyprlandCapabilities,
     session: Option<Arc<SessionStore>>,
+) -> Result<()>
+where
+    L: ApplicationLauncher + 'static,
+{
+    handle_connection_with_services(
+        stream,
+        applications,
+        launcher,
+        hyprland_capabilities,
+        session,
+        Arc::new(TelemetryStore::default()),
+        true,
+    )
+    .await
+}
+
+async fn handle_connection_with_services<L>(
+    stream: UnixStream,
+    applications: Arc<[Application]>,
+    launcher: Arc<L>,
+    hyprland_capabilities: HyprlandCapabilities,
+    session: Option<Arc<SessionStore>>,
+    telemetry: Arc<TelemetryStore>,
+    telemetry_enabled: bool,
 ) -> Result<()>
 where
     L: ApplicationLauncher + 'static,
@@ -253,9 +289,44 @@ where
         }
     }
 
+    let mut snapshot_updates = session.as_ref().map(|store| store.subscribe());
+    // Do not interleave a pushed snapshot into a client that has not yet
+    // requested its initial state. Once it has, every later changed snapshot
+    // is delivered with request ID zero.
+    let mut session_updates_enabled = false;
     loop {
-        let Some(line) = frame_to_line(read_frame(&mut reader).await?, &mut writer).await? else {
-            break;
+        let line = tokio::select! {
+            frame = read_frame(&mut reader) => {
+                let Some(line) = frame_to_line(frame?, &mut writer).await? else {
+                    break;
+                };
+                line
+            }
+            changed = wait_for_snapshot_update(&mut snapshot_updates) => {
+                if changed.is_err() {
+                    break;
+                }
+                let snapshot = snapshot_updates
+                    .as_mut()
+                    .and_then(|receiver| receiver.borrow_and_update().clone());
+                if !session_updates_enabled {
+                    continue;
+                }
+                let Some(snapshot) = snapshot else {
+                    continue;
+                };
+                write_response(
+                    &mut writer,
+                    &Response::WorkspaceSnapshot {
+                        protocol_version: PROTOCOL_VERSION,
+                        // A zero request ID identifies a Core-published update.
+                        request_id: 0,
+                        snapshot: (*snapshot).clone(),
+                    },
+                )
+                .await?;
+                continue;
+            }
         };
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(request) if request.protocol_version() != PROTOCOL_VERSION => {
@@ -338,6 +409,27 @@ where
                 )
                 .await
             }
+            Ok(Request::GetTelemetrySnapshot { request_id, .. }) if !telemetry_enabled => {
+                Response::TelemetrySnapshotRejected {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    code: TelemetrySnapshotError::Disabled,
+                    retryable: false,
+                }
+            }
+            Ok(Request::GetTelemetrySnapshot { request_id, .. }) => match telemetry.current() {
+                Some(snapshot) => Response::TelemetrySnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    snapshot: (*snapshot).clone(),
+                },
+                None => Response::TelemetrySnapshotRejected {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    code: TelemetrySnapshotError::SnapshotNotReady,
+                    retryable: true,
+                },
+            },
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -351,6 +443,12 @@ where
             response,
             Response::Error { ref code, .. } if code == "protocol_mismatch"
         );
+        if matches!(response, Response::WorkspaceSnapshot { .. }) {
+            if let Some(receiver) = &mut snapshot_updates {
+                receiver.borrow_and_update();
+            }
+            session_updates_enabled = true;
+        }
         write_response(&mut writer, &response).await?;
         if should_close {
             break;
@@ -358,6 +456,15 @@ where
     }
     info!("frontend disconnected");
     Ok(())
+}
+
+async fn wait_for_snapshot_update(
+    receiver: &mut Option<watch::Receiver<Option<Arc<velora_protocol::WorkspaceSnapshot>>>>,
+) -> Result<(), watch::error::RecvError> {
+    match receiver {
+        Some(receiver) => receiver.changed().await,
+        None => std::future::pending().await,
+    }
 }
 
 fn workspace_snapshot_rejection(request_id: u64, capabilities: &HyprlandCapabilities) -> Response {
@@ -532,17 +639,23 @@ fn application_page(
         .min(applications.len());
     let limit = usize::from(limit.clamp(1, MAX_APPLICATION_PAGE_SIZE));
     let requested_end = start.saturating_add(limit).min(applications.len());
+    // Page size is monotonic with the number of entries, so binary-search the
+    // largest transport-safe endpoint instead of cloning and serializing every
+    // intermediate candidate.
     let mut end = start;
-
-    while end < requested_end {
-        let candidate = application_page_response(applications, request_id, start, end + 1, total);
+    let mut upper_bound = requested_end;
+    while end < upper_bound {
+        let candidate_end = end + (upper_bound - end).div_ceil(2);
+        let candidate =
+            application_page_response(applications, request_id, start, candidate_end, total);
         let encoded_size = serde_json::to_vec(&candidate)
             .context("failed to size application page")?
             .len();
-        if encoded_size > MAX_MESSAGE_BYTES {
-            break;
+        if encoded_size <= MAX_MESSAGE_BYTES {
+            end = candidate_end;
+        } else {
+            upper_bound = candidate_end - 1;
         }
-        end += 1;
     }
 
     if end == start && start < requested_end {
@@ -1226,6 +1339,7 @@ mod tests {
         for generation in 1..=2 {
             let config = CoreConfig {
                 socket_path: socket_path.clone(),
+                telemetry: crate::config::TelemetryPolicy::default(),
             };
             let launcher = Arc::new(MockLauncher::new(MockLaunchOutcome::Accepted(
                 5000 + generation,
@@ -1237,6 +1351,8 @@ mod tests {
                 Arc::clone(&launcher),
                 HyprlandCapabilities::unavailable(),
                 dead_session_store(),
+                Arc::new(TelemetryStore::default()),
+                true,
                 async move {
                     shutdown_rx.await.context("test shutdown sender dropped")?;
                     Ok(())
@@ -1367,6 +1483,69 @@ mod tests {
                 request_id: 92,
                 code: WorkspaceSnapshotError::SnapshotNotReady,
                 retryable: true,
+            }
+        );
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetTelemetrySnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 93,
+                },
+            )
+            .await,
+            Response::TelemetrySnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 93,
+                code: TelemetrySnapshotError::SnapshotNotReady,
+                retryable: true,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_telemetry_request_when_disabled() {
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            false,
+        ));
+        let mut reader = BufReader::new(client);
+
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetTelemetrySnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 94,
+                },
+            )
+            .await,
+            Response::TelemetrySnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 94,
+                code: TelemetrySnapshotError::Disabled,
+                retryable: false,
             }
         );
 
