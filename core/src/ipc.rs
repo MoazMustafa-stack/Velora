@@ -21,8 +21,9 @@ use tokio::{
 use tracing::{info, warn};
 use velora_protocol::{
     Application, HANDSHAKE_TIMEOUT_SECONDS, HyprlandAvailability, HyprlandCapabilities,
-    MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, Request, Response, SERVER_NAME,
-    TelemetrySnapshotError, WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
+    MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, MediaControlError, MediaSnapshotError,
+    NotificationsError, PROTOCOL_VERSION, Request, Response, SERVER_NAME, TelemetrySnapshotError,
+    WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
 };
 
 use crate::{session_store::SessionStore, telemetry::runtime::TelemetryStore};
@@ -430,6 +431,31 @@ where
                     retryable: true,
                 },
             },
+            // Media and notification stores land in P5.03+; until then Core
+            // answers with the typed unavailable/disabled paths so the v5
+            // contract round-trips without exposing any D-Bus state.
+            Ok(Request::GetMediaSnapshot { request_id, .. }) => Response::MediaSnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id,
+                code: MediaSnapshotError::MediaUnavailable,
+                retryable: false,
+            },
+            Ok(Request::GetNotifications { request_id, .. }) => Response::NotificationsRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id,
+                code: NotificationsError::NotificationsUnavailable,
+                retryable: false,
+            },
+            Ok(Request::SendMediaControl {
+                request_id,
+                player_handle,
+                ..
+            }) => Response::MediaControlRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id,
+                player_handle,
+                code: MediaControlError::ControlUnavailable,
+            },
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -826,6 +852,7 @@ mod tests {
     use tempfile::tempdir;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
     use tokio::sync::oneshot;
+    use velora_protocol::MediaControlVerb;
 
     #[derive(Clone, Copy)]
     enum MockLaunchOutcome {
@@ -1546,6 +1573,85 @@ mod tests {
                 request_id: 94,
                 code: TelemetrySnapshotError::Disabled,
                 retryable: false,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn answers_media_and_notification_requests_with_typed_unavailable_paths() {
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+        ));
+        let mut reader = BufReader::new(client);
+
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetMediaSnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 101,
+                },
+            )
+            .await,
+            Response::MediaSnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 101,
+                code: MediaSnapshotError::MediaUnavailable,
+                retryable: false,
+            }
+        );
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetNotifications {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 102,
+                },
+            )
+            .await,
+            Response::NotificationsRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 102,
+                code: NotificationsError::NotificationsUnavailable,
+                retryable: false,
+            }
+        );
+
+        // Control is rejected without ever touching a bus name or D-Bus method.
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::SendMediaControl {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 103,
+                    player_handle: "player:opaque-1".to_owned(),
+                    verb: MediaControlVerb::PlayPause,
+                },
+            )
+            .await,
+            Response::MediaControlRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 103,
+                player_handle: "player:opaque-1".to_owned(),
+                code: MediaControlError::ControlUnavailable,
             }
         );
 

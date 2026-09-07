@@ -3,8 +3,11 @@ use std::{env, path::PathBuf};
 use thiserror::Error;
 
 /// Core, the native bridge, and Godot intentionally require an exact match.
-/// Phase 4 adds the typed system-telemetry contract.
-pub const PROTOCOL_VERSION: u8 = 4;
+/// Phase 5 bumps the contract to v5 for the typed media and notification
+/// contract. v5 is not backward compatible with v4: the exact-match handshake
+/// rejects any client that does not advertise `PROTOCOL_VERSION`, so Core,
+/// the bridge fixtures, and Godot move together (see the Phase 5 plan).
+pub const PROTOCOL_VERSION: u8 = 5;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const HANDSHAKE_TIMEOUT_SECONDS: u64 = 5;
 pub const DEFAULT_APPLICATION_PAGE_SIZE: u16 = 32;
@@ -17,6 +20,21 @@ pub const MAX_TELEMETRY_INTERVAL_MS: u32 = 10_000;
 pub const MAX_TELEMETRY_DEVICES: u16 = 64;
 pub const MAX_TELEMETRY_INTERFACES: u16 = 64;
 pub const MAX_TELEMETRY_PAYLOAD_BYTES: usize = 4 * 1024;
+/// Maximum number of MPRIS players carried in one media snapshot.
+pub const MAX_MEDIA_PLAYERS: usize = 16;
+/// Maximum number of notifications carried in one bounded notification feed.
+pub const MAX_NOTIFICATIONS: usize = 32;
+/// Maximum byte length (UTF-8) of any media/notification string field.
+pub const MAX_STRING_BYTES: usize = 256;
+/// Frame budget for a serialized media snapshot. This is a Core-enforced
+/// production budget, not a consequence of the structural ceilings: sixteen
+/// players at full-width strings can exceed 4 KiB, so Core bounds the payload
+/// independently (truncating metadata) when it serves a snapshot.
+pub const MAX_MEDIA_PAYLOAD_BYTES: usize = 4 * 1024;
+/// Frame budget for a serialized notification feed, enforced by Core via
+/// drop-oldest/truncation. The structural ceiling (`MAX_NOTIFICATIONS`) does
+/// not by itself guarantee a frame fits this budget.
+pub const MAX_NOTIFICATION_PAYLOAD_BYTES: usize = 4 * 1024;
 pub const CLIENT_NAME: &str = "velora-godot";
 pub const SERVER_NAME: &str = "velora-core";
 
@@ -283,6 +301,202 @@ impl TelemetrySnapshot {
     }
 }
 
+/// MPRIS `PlaybackStatus` values. A player that has not reported a status yet
+/// is normalized to `Stopped` by Core rather than inventing a fourth variant.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackStatus {
+    Playing,
+    Paused,
+    Stopped,
+}
+
+/// One MPRIS player normalized for the media console. The handle is opaque and
+/// snapshot-issued; a raw D-Bus well-known name never crosses Velora IPC.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MediaPlayer {
+    /// Opaque, snapshot-issued identifier. Never a raw bus name.
+    pub handle: String,
+    /// Human-readable player identity (for example "Spotify"). Never a bus name.
+    pub identity: String,
+    pub status: PlaybackStatus,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    /// Track length in microseconds, when known.
+    pub length_micros: Option<u64>,
+    /// Playback position in microseconds.
+    pub position_micros: u64,
+    pub can_play: bool,
+    pub can_pause: bool,
+    pub can_go_next: bool,
+    pub can_go_previous: bool,
+    pub can_seek: bool,
+    pub can_control: bool,
+}
+
+/// The single authoritative media snapshot Core serves to the frontend.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MediaSnapshot {
+    /// Monotonically increasing within one Core session. Clients ignore older
+    /// values so a reconnecting or stale reader can never regress state.
+    pub sequence: u64,
+    pub players: Vec<MediaPlayer>,
+    pub active_player_handle: Option<String>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum MediaSnapshotValidationError {
+    #[error("media snapshot contains more than {MAX_MEDIA_PLAYERS} players")]
+    TooManyPlayers,
+    #[error("media snapshot contains an empty or duplicate player handle")]
+    InvalidPlayerHandle,
+    #[error("media snapshot string exceeds {MAX_STRING_BYTES} bytes")]
+    StringTooLong,
+    #[error("active player handle is not in the snapshot")]
+    UnknownActivePlayer,
+}
+
+impl MediaSnapshot {
+    pub fn is_newer_than(&self, sequence: u64) -> bool {
+        self.sequence > sequence
+    }
+
+    pub fn validate(&self) -> Result<(), MediaSnapshotValidationError> {
+        if self.players.len() > MAX_MEDIA_PLAYERS {
+            return Err(MediaSnapshotValidationError::TooManyPlayers);
+        }
+
+        let mut handles = std::collections::HashSet::new();
+        for player in &self.players {
+            if player.handle.is_empty() || !handles.insert(&player.handle) {
+                return Err(MediaSnapshotValidationError::InvalidPlayerHandle);
+            }
+            player.validate_strings()?;
+        }
+
+        if self
+            .active_player_handle
+            .as_ref()
+            .is_some_and(|handle| !handles.contains(handle))
+        {
+            return Err(MediaSnapshotValidationError::UnknownActivePlayer);
+        }
+
+        Ok(())
+    }
+}
+
+impl MediaPlayer {
+    fn validate_strings(&self) -> Result<(), MediaSnapshotValidationError> {
+        let fields = [
+            Some(self.identity.as_str()),
+            self.title.as_deref(),
+            self.artist.as_deref(),
+            self.album.as_deref(),
+        ];
+        if fields
+            .into_iter()
+            .flatten()
+            .any(|field| field.len() > MAX_STRING_BYTES)
+        {
+            return Err(MediaSnapshotValidationError::StringTooLong);
+        }
+        Ok(())
+    }
+}
+
+/// Notifications urgency levels (`0` low, `1` normal, `2` critical).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationUrgency {
+    Low,
+    Normal,
+    Critical,
+}
+
+/// One observed notification. The handle is opaque and feed-issued; the raw
+/// daemon replacement id never crosses Velora IPC.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Notification {
+    /// Opaque, feed-issued identifier. Never a raw daemon id.
+    pub handle: String,
+    pub app_name: String,
+    pub summary: String,
+    pub body: String,
+    pub urgency: NotificationUrgency,
+    /// Unix timestamp in milliseconds when the notification was posted.
+    pub timestamp_unix_ms: u64,
+}
+
+/// The bounded, memory-only notification feed Core serves to the frontend.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NotificationFeed {
+    /// Monotonically increasing within one Core session.
+    pub sequence: u64,
+    pub notifications: Vec<Notification>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum NotificationFeedValidationError {
+    #[error("notification feed contains more than {MAX_NOTIFICATIONS} notifications")]
+    TooManyNotifications,
+    #[error("notification feed contains an empty or duplicate handle")]
+    InvalidNotificationHandle,
+    #[error("notification string exceeds {MAX_STRING_BYTES} bytes")]
+    StringTooLong,
+}
+
+impl NotificationFeed {
+    pub fn is_newer_than(&self, sequence: u64) -> bool {
+        self.sequence > sequence
+    }
+
+    pub fn validate(&self) -> Result<(), NotificationFeedValidationError> {
+        if self.notifications.len() > MAX_NOTIFICATIONS {
+            return Err(NotificationFeedValidationError::TooManyNotifications);
+        }
+
+        let mut handles = std::collections::HashSet::new();
+        for notification in &self.notifications {
+            if notification.handle.is_empty() || !handles.insert(&notification.handle) {
+                return Err(NotificationFeedValidationError::InvalidNotificationHandle);
+            }
+            notification.validate_strings()?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Notification {
+    fn validate_strings(&self) -> Result<(), NotificationFeedValidationError> {
+        let fields = [
+            self.app_name.as_str(),
+            self.summary.as_str(),
+            self.body.as_str(),
+        ];
+        if fields.iter().any(|field| field.len() > MAX_STRING_BYTES) {
+            return Err(NotificationFeedValidationError::StringTooLong);
+        }
+        Ok(())
+    }
+}
+
+/// The only control verbs Godot may send. Bus names, method names, and
+/// arguments never cross Velora IPC; Core re-maps this allowlisted verb onto
+/// the corresponding MPRIS method for the opaque player handle.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaControlVerb {
+    Play,
+    Pause,
+    PlayPause,
+    Stop,
+    Next,
+    Previous,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Application {
     pub id: String,
@@ -342,6 +556,21 @@ pub enum Request {
     GetTelemetrySnapshot {
         protocol_version: u8,
         request_id: u64,
+    },
+    GetMediaSnapshot {
+        protocol_version: u8,
+        request_id: u64,
+    },
+    GetNotifications {
+        protocol_version: u8,
+        request_id: u64,
+    },
+    SendMediaControl {
+        protocol_version: u8,
+        request_id: u64,
+        /// A snapshot-issued opaque handle. Raw bus names are never accepted.
+        player_handle: String,
+        verb: MediaControlVerb,
     },
 }
 
@@ -433,6 +662,39 @@ pub enum Response {
         code: TelemetrySnapshotError,
         retryable: bool,
     },
+    MediaSnapshot {
+        protocol_version: u8,
+        request_id: u64,
+        snapshot: MediaSnapshot,
+    },
+    MediaSnapshotRejected {
+        protocol_version: u8,
+        request_id: u64,
+        code: MediaSnapshotError,
+        retryable: bool,
+    },
+    Notifications {
+        protocol_version: u8,
+        request_id: u64,
+        feed: NotificationFeed,
+    },
+    NotificationsRejected {
+        protocol_version: u8,
+        request_id: u64,
+        code: NotificationsError,
+        retryable: bool,
+    },
+    MediaControlAccepted {
+        protocol_version: u8,
+        request_id: u64,
+        player_handle: String,
+    },
+    MediaControlRejected {
+        protocol_version: u8,
+        request_id: u64,
+        player_handle: String,
+        code: MediaControlError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -471,6 +733,31 @@ pub enum WindowFocusError {
     FocusFailed,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaSnapshotError {
+    MediaUnavailable,
+    SnapshotNotReady,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaControlError {
+    MediaUnavailable,
+    UnknownPlayer,
+    StaleHandle,
+    ControlUnavailable,
+    ControlFailed,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationsError {
+    NotificationsUnavailable,
+    MonitorRestricted,
+    FeedNotReady,
+}
+
 impl Request {
     pub fn protocol_version(&self) -> u8 {
         match self {
@@ -499,6 +786,15 @@ impl Request {
                 protocol_version, ..
             }
             | Self::GetTelemetrySnapshot {
+                protocol_version, ..
+            }
+            | Self::GetMediaSnapshot {
+                protocol_version, ..
+            }
+            | Self::GetNotifications {
+                protocol_version, ..
+            }
+            | Self::SendMediaControl {
                 protocol_version, ..
             } => *protocol_version,
         }
@@ -552,7 +848,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            r#"{"type":"hello","protocol_version":4,"client_name":"velora-godot","client_version":"0.2.0"}"#
+            r#"{"type":"hello","protocol_version":5,"client_name":"velora-godot","client_version":"0.2.0"}"#
         );
     }
 
@@ -940,5 +1236,293 @@ mod tests {
             snapshot.validate(),
             Err(TelemetryValidationError::InvalidSampleInterval)
         );
+    }
+
+    fn test_media_player(handle: &str) -> MediaPlayer {
+        MediaPlayer {
+            handle: handle.to_owned(),
+            identity: "Spotify".to_owned(),
+            status: PlaybackStatus::Playing,
+            title: Some("Velora Theme".to_owned()),
+            artist: Some("Velora".to_owned()),
+            album: Some("Phase 5".to_owned()),
+            length_micros: Some(250_000_000),
+            position_micros: 12_500_000,
+            can_play: true,
+            can_pause: true,
+            can_go_next: true,
+            can_go_previous: true,
+            can_seek: true,
+            can_control: true,
+        }
+    }
+
+    fn test_media_snapshot() -> MediaSnapshot {
+        MediaSnapshot {
+            sequence: 9,
+            players: vec![test_media_player("player:opaque-1")],
+            active_player_handle: Some("player:opaque-1".to_owned()),
+        }
+    }
+
+    fn test_notification(handle: &str) -> Notification {
+        Notification {
+            handle: handle.to_owned(),
+            app_name: "Velora".to_owned(),
+            summary: "Build complete".to_owned(),
+            body: "The release gate passed.".to_owned(),
+            urgency: NotificationUrgency::Normal,
+            timestamp_unix_ms: 1_777_777_777_000,
+        }
+    }
+
+    fn test_notification_feed() -> NotificationFeed {
+        NotificationFeed {
+            sequence: 5,
+            notifications: vec![test_notification("notification:opaque-1")],
+        }
+    }
+
+    #[test]
+    fn round_trips_media_snapshot_request_response_and_rejection() {
+        let request = Request::GetMediaSnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 61,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+        assert_eq!(request.protocol_version(), PROTOCOL_VERSION);
+
+        let response = Response::MediaSnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 61,
+            snapshot: test_media_snapshot(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+
+        let rejected = Response::MediaSnapshotRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 62,
+            code: MediaSnapshotError::MediaUnavailable,
+            retryable: false,
+        };
+        let json = serde_json::to_string(&rejected).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), rejected);
+    }
+
+    #[test]
+    fn round_trips_notifications_request_response_and_rejection() {
+        let request = Request::GetNotifications {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 63,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+        assert_eq!(request.protocol_version(), PROTOCOL_VERSION);
+
+        let response = Response::Notifications {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 63,
+            feed: test_notification_feed(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+
+        for code in [
+            NotificationsError::NotificationsUnavailable,
+            NotificationsError::MonitorRestricted,
+            NotificationsError::FeedNotReady,
+        ] {
+            let rejected = Response::NotificationsRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 64,
+                code,
+                retryable: true,
+            };
+            let json = serde_json::to_string(&rejected).unwrap();
+            assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), rejected);
+        }
+    }
+
+    #[test]
+    fn round_trips_media_control_request_and_typed_outcomes() {
+        for verb in [
+            MediaControlVerb::Play,
+            MediaControlVerb::Pause,
+            MediaControlVerb::PlayPause,
+            MediaControlVerb::Stop,
+            MediaControlVerb::Next,
+            MediaControlVerb::Previous,
+        ] {
+            let request = Request::SendMediaControl {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 71,
+                player_handle: "player:opaque-1".to_owned(),
+                verb,
+            };
+            let json = serde_json::to_string(&request).unwrap();
+            assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+            assert_eq!(request.protocol_version(), PROTOCOL_VERSION);
+        }
+
+        let accepted = Response::MediaControlAccepted {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 71,
+            player_handle: "player:opaque-1".to_owned(),
+        };
+        let json = serde_json::to_string(&accepted).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), accepted);
+
+        for code in [
+            MediaControlError::MediaUnavailable,
+            MediaControlError::UnknownPlayer,
+            MediaControlError::StaleHandle,
+            MediaControlError::ControlUnavailable,
+            MediaControlError::ControlFailed,
+        ] {
+            let rejected = Response::MediaControlRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 72,
+                player_handle: "player:opaque-1".to_owned(),
+                code,
+            };
+            let json = serde_json::to_string(&rejected).unwrap();
+            assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), rejected);
+        }
+    }
+
+    #[test]
+    fn media_snapshot_validation_detects_bounds_and_stale_sequences() {
+        let mut snapshot = test_media_snapshot();
+        assert!(snapshot.validate().is_ok());
+        assert!(snapshot.is_newer_than(8));
+        assert!(!snapshot.is_newer_than(9));
+
+        snapshot.active_player_handle = Some("player:missing".to_owned());
+        assert_eq!(
+            snapshot.validate(),
+            Err(MediaSnapshotValidationError::UnknownActivePlayer)
+        );
+        snapshot.active_player_handle = Some("player:opaque-1".to_owned());
+
+        snapshot.players.push(test_media_player("player:opaque-1"));
+        assert_eq!(
+            snapshot.validate(),
+            Err(MediaSnapshotValidationError::InvalidPlayerHandle)
+        );
+        snapshot.players.pop();
+
+        snapshot.players[0].handle.clear();
+        assert_eq!(
+            snapshot.validate(),
+            Err(MediaSnapshotValidationError::InvalidPlayerHandle)
+        );
+        snapshot.players[0].handle = "player:opaque-1".to_owned();
+
+        snapshot.players[0].title = Some("t".repeat(MAX_STRING_BYTES + 1));
+        assert_eq!(
+            snapshot.validate(),
+            Err(MediaSnapshotValidationError::StringTooLong)
+        );
+    }
+
+    #[test]
+    fn media_snapshot_rejects_too_many_players() {
+        let mut snapshot = test_media_snapshot();
+        snapshot.players = (0..=MAX_MEDIA_PLAYERS)
+            .map(|index| test_media_player(&format!("player:{index}")))
+            .collect();
+        assert_eq!(
+            snapshot.validate(),
+            Err(MediaSnapshotValidationError::TooManyPlayers)
+        );
+    }
+
+    #[test]
+    fn notification_feed_validation_detects_bounds_and_stale_sequences() {
+        let mut feed = test_notification_feed();
+        assert!(feed.validate().is_ok());
+        assert!(feed.is_newer_than(4));
+        assert!(!feed.is_newer_than(5));
+
+        feed.notifications
+            .push(test_notification("notification:opaque-1"));
+        assert_eq!(
+            feed.validate(),
+            Err(NotificationFeedValidationError::InvalidNotificationHandle)
+        );
+        feed.notifications.pop();
+
+        feed.notifications[0].handle.clear();
+        assert_eq!(
+            feed.validate(),
+            Err(NotificationFeedValidationError::InvalidNotificationHandle)
+        );
+        feed.notifications[0].handle = "notification:opaque-1".to_owned();
+
+        feed.notifications[0].body = "b".repeat(MAX_STRING_BYTES + 1);
+        assert_eq!(
+            feed.validate(),
+            Err(NotificationFeedValidationError::StringTooLong)
+        );
+    }
+
+    #[test]
+    fn notification_feed_rejects_too_many_entries() {
+        let mut feed = test_notification_feed();
+        feed.notifications = (0..=MAX_NOTIFICATIONS)
+            .map(|index| test_notification(&format!("notification:{index}")))
+            .collect();
+        assert_eq!(
+            feed.validate(),
+            Err(NotificationFeedValidationError::TooManyNotifications)
+        );
+    }
+
+    #[test]
+    fn full_media_snapshot_stays_under_the_transport_limit() {
+        let mut snapshot = test_media_snapshot();
+        snapshot.players = (0..MAX_MEDIA_PLAYERS)
+            .map(|index| {
+                let handle = format!("player:{index}");
+                MediaPlayer {
+                    handle,
+                    identity: format!("Player {index}"),
+                    status: PlaybackStatus::Paused,
+                    title: Some(format!("Title {index}")),
+                    artist: Some(format!("Artist {index}")),
+                    album: Some(format!("Album {index}")),
+                    length_micros: Some(u64::MAX),
+                    position_micros: u64::MAX,
+                    can_play: false,
+                    can_pause: false,
+                    can_go_next: false,
+                    can_go_previous: false,
+                    can_seek: false,
+                    can_control: false,
+                }
+            })
+            .collect();
+        snapshot.active_player_handle = Some("player:0".to_owned());
+
+        assert!(snapshot.validate().is_ok());
+        let response = Response::MediaSnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 81,
+            snapshot,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.len() <= MAX_MESSAGE_BYTES);
+    }
+
+    #[test]
+    fn protocol_v5_bounds_are_aligned() {
+        assert_eq!(PROTOCOL_VERSION, 5);
+        assert_eq!(MAX_MEDIA_PLAYERS, 16);
+        assert_eq!(MAX_NOTIFICATIONS, 32);
+        assert_eq!(MAX_STRING_BYTES, 256);
+        assert_eq!(MAX_MEDIA_PAYLOAD_BYTES, 4 * 1024);
+        assert_eq!(MAX_NOTIFICATION_PAYLOAD_BYTES, 4 * 1024);
     }
 }

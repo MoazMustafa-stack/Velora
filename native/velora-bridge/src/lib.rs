@@ -355,6 +355,15 @@ impl LineAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use velora_protocol::PROTOCOL_VERSION;
+
+    #[test]
+    fn bridge_locks_to_the_exact_match_protocol_version() {
+        // The bridge is transport glue with no business logic, but it must be
+        // compiled against the same exact-match contract as Core and Godot.
+        // v5 bumps the media/notification contract; any version drift fails here.
+        assert_eq!(PROTOCOL_VERSION, 5);
+    }
 
     #[test]
     fn assembles_partial_and_multiple_lines() {
