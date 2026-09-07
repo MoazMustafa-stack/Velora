@@ -18,6 +18,12 @@ signal focus_accepted(window_handle: String)
 signal focus_rejected(window_handle: String, code: String, message: String, retryable: bool)
 signal telemetry_snapshot_changed(snapshot: Dictionary)
 signal telemetry_availability_changed(availability: String)
+signal media_snapshot_changed(snapshot: Dictionary)
+signal media_availability_changed(availability: String)
+signal media_control_accepted(player_handle: String, verb: String)
+signal media_control_rejected(player_handle: String, verb: String, code: String, message: String, retryable: bool)
+signal notification_feed_changed(feed: Dictionary)
+signal notifications_availability_changed(availability: String)
 
 enum ConnectionState {
 	DISCONNECTED,
@@ -28,7 +34,9 @@ enum ConnectionState {
 	INCOMPATIBLE,
 }
 
-const PROTOCOL_VERSION := 4
+# Phase 5 bumps the exact-match contract to v5 for the typed media and
+# notification families. Core, the bridge, and this client move together.
+const PROTOCOL_VERSION := 5
 const CLIENT_NAME := "velora-godot"
 const CLIENT_VERSION := "0.2.0"
 const PING_INTERVAL_SECONDS := 5.0
@@ -41,6 +49,16 @@ const MAX_SESSION_WINDOWS := 1024
 const SWITCH_TIMEOUT_SECONDS := 5.0
 const FOCUS_TIMEOUT_SECONDS := 5.0
 const TELEMETRY_POLL_SECONDS := 1.0
+const MAX_MEDIA_PLAYERS := 16
+const MAX_NOTIFICATIONS := 32
+const MAX_STRING_BYTES := 256
+const MEDIA_CONTROL_TIMEOUT_SECONDS := 5.0
+const PLAYBACK_STATUSES := ["playing", "paused", "stopped"]
+const NOTIFICATION_URGENCIES := ["low", "normal", "critical"]
+# The only control verbs this client may send. Core re-maps each verb onto the
+# matching MPRIS method for the opaque player handle; bus names, method names,
+# raw arguments, and shell commands never cross Velora IPC.
+const MEDIA_CONTROL_VERBS := ["play", "pause", "play_pause", "stop", "next", "previous"]
 
 @export var auto_connect := true
 
@@ -60,6 +78,13 @@ var session_snapshot: Dictionary = {}
 var session_availability := "unknown"
 var telemetry_snapshot: Dictionary = {}
 var telemetry_availability := "unknown"
+# Last good media and notification state is intentionally kept across
+# reconnects so the UI keeps showing stale-but-labelled data instead of going
+# blank; monotonic sequence fencing drops anything older once Core answers.
+var media_snapshot: Dictionary = {}
+var media_availability := "unknown"
+var notification_feed: Dictionary = {}
+var notifications_availability := "unknown"
 
 var _bridge: Node
 var _socket_path := ""
@@ -86,6 +111,12 @@ var _focus_handle := ""
 var _focus_elapsed := 0.0
 var _telemetry_request_id := 0
 var _telemetry_elapsed := 0.0
+var _media_request_id := 0
+var _notifications_request_id := 0
+var _media_control_request_id := 0
+var _media_control_handle := ""
+var _media_control_verb := ""
+var _media_control_elapsed := 0.0
 
 func _ready() -> void:
 	_bridge = bridge_override
@@ -137,6 +168,8 @@ func disconnect_from_core() -> void:
 	_pending_applications.clear()
 	_application_request_id = 0
 	_session_request_id = 0
+	_media_request_id = 0
+	_notifications_request_id = 0
 	if _focus_request_id != 0:
 		var pending_focus := _focus_handle
 		_clear_focus_request()
@@ -145,6 +178,7 @@ func disconnect_from_core() -> void:
 		var pending_handle := _switch_handle
 		_clear_switch_request()
 		_emit_switch_rejection(pending_handle, "connection_lost", "CONNECTION LOST // RETRY", true)
+	_fail_pending_media_control("connection_lost")
 	_fail_pending_launch("connection_lost", true)
 	_set_state(ConnectionState.DISCONNECTED, "CORE // DISCONNECTED")
 
@@ -199,6 +233,28 @@ func request_telemetry_snapshot() -> bool:
 	_telemetry_request_id = request_id
 	return _send_message({
 		"type": "get_telemetry_snapshot",
+		"protocol_version": PROTOCOL_VERSION,
+		"request_id": request_id,
+	})
+
+func request_media_snapshot() -> bool:
+	if state != ConnectionState.READY or _media_request_id != 0:
+		return false
+	var request_id := _take_request_id()
+	_media_request_id = request_id
+	return _send_message({
+		"type": "get_media_snapshot",
+		"protocol_version": PROTOCOL_VERSION,
+		"request_id": request_id,
+	})
+
+func request_notifications() -> bool:
+	if state != ConnectionState.READY or _notifications_request_id != 0:
+		return false
+	var request_id := _take_request_id()
+	_notifications_request_id = request_id
+	return _send_message({
+		"type": "get_notifications",
 		"protocol_version": PROTOCOL_VERSION,
 		"request_id": request_id,
 	})
@@ -266,6 +322,40 @@ func request_focus_window(window_handle: String) -> bool:
 		return false
 	return true
 
+# Sends one of the six allowlisted control verbs for an opaque player handle
+# issued by a media snapshot. Bus names, method names, raw arguments, and
+# shell commands are not part of the request surface and are never forwarded.
+func send_media_control(player_handle: String, verb: String) -> bool:
+	if state != ConnectionState.READY:
+		_reject_media_control(player_handle, verb, "core_offline")
+		return false
+	if player_handle.is_empty():
+		_reject_media_control(player_handle, verb, "invalid_player_handle")
+		return false
+	if not MEDIA_CONTROL_VERBS.has(verb):
+		_reject_media_control(player_handle, verb, "invalid_verb")
+		return false
+	if _media_control_request_id != 0:
+		_reject_media_control(player_handle, verb, "media_busy")
+		return false
+	var request_id := _take_request_id()
+	_media_control_request_id = request_id
+	_media_control_handle = player_handle
+	_media_control_verb = verb
+	_media_control_elapsed = 0.0
+	var sent := _send_message({
+		"type": "send_media_control",
+		"protocol_version": PROTOCOL_VERSION,
+		"request_id": request_id,
+		"player_handle": player_handle,
+		"verb": verb,
+	})
+	if not sent:
+		_clear_media_control_request()
+		_reject_media_control(player_handle, verb, "send_failed")
+		return false
+	return true
+
 func launch_app(desktop_id: String) -> bool:
 	last_requested_desktop_id = desktop_id
 	if state != ConnectionState.READY:
@@ -301,8 +391,11 @@ func _attempt_connect() -> void:
 	_waiting_for_pong = false
 	_application_request_id = 0
 	_session_request_id = 0
+	_media_request_id = 0
+	_notifications_request_id = 0
 	_clear_focus_request()
 	_clear_switch_request()
+	_clear_media_control_request()
 	_set_state(ConnectionState.CONNECTING, "CORE // CONNECTING")
 	_bridge.connect_socket(_socket_path)
 
@@ -321,6 +414,8 @@ func _on_socket_disconnected(_reason: String) -> void:
 	_waiting_for_pong = false
 	_application_request_id = 0
 	_session_request_id = 0
+	_media_request_id = 0
+	_notifications_request_id = 0
 	if _focus_request_id != 0:
 		var pending_focus := _focus_handle
 		_clear_focus_request()
@@ -329,6 +424,7 @@ func _on_socket_disconnected(_reason: String) -> void:
 		var pending_handle := _switch_handle
 		_clear_switch_request()
 		_emit_switch_rejection(pending_handle, "connection_lost", "CONNECTION LOST // RETRY", true)
+	_fail_pending_media_control("connection_lost")
 	_fail_pending_launch("connection_lost", true)
 	if state != ConnectionState.INCOMPATIBLE and state != ConnectionState.DISCONNECTED:
 		_schedule_reconnect()
@@ -359,6 +455,11 @@ func _on_line_received(payload: String) -> void:
 			request_applications()
 			request_hyprland_capabilities()
 			request_telemetry_snapshot()
+			# One media/notification fetch per connection: refreshes
+			# stale-but-labelled state after a reconnect without ever
+			# becoming a polling loop. Later refreshes are scene-driven.
+			request_media_snapshot()
+			request_notifications()
 			if session_snapshot.is_empty():
 				# Only the first fetch is client-driven; later refreshes are
 				# Core's event-driven snapshots arriving unprompted or a
@@ -382,6 +483,18 @@ func _on_line_received(payload: String) -> void:
 			_on_telemetry_snapshot(message)
 		"telemetry_snapshot_rejected":
 			_on_telemetry_snapshot_rejected(message)
+		"media_snapshot":
+			_on_media_snapshot(message)
+		"media_snapshot_rejected":
+			_on_media_snapshot_rejected(message)
+		"notifications":
+			_on_notifications(message)
+		"notifications_rejected":
+			_on_notifications_rejected(message)
+		"media_control_accepted":
+			_on_media_control_accepted(message)
+		"media_control_rejected":
+			_on_media_control_rejected(message)
 		"switch_accepted":
 			var request_id := int(message.get("request_id", 0))
 			if request_id != _switch_request_id:
@@ -469,6 +582,10 @@ func _update_launch_timeout(delta: float) -> void:
 			var focused := _focus_handle
 			_clear_focus_request()
 			_emit_focus_rejection(focused, "focus_timeout", "FOCUS TIMED OUT // RETRY", true)
+	if _media_control_request_id != 0:
+		_media_control_elapsed += delta
+		if _media_control_elapsed >= MEDIA_CONTROL_TIMEOUT_SECONDS:
+			_fail_pending_media_control("media_control_timeout")
 
 func _clear_switch_request() -> void:
 	_switch_request_id = 0
@@ -537,6 +654,85 @@ func _emit_switch_rejection(
 ) -> void:
 	switch_rejected.emit(workspace_handle, code, message, retryable)
 	_emit_ux_status("switch_failed", message, "failure", 3.0 if retryable else -1.0)
+
+func _clear_media_control_request() -> void:
+	_media_control_request_id = 0
+	_media_control_handle = ""
+	_media_control_verb = ""
+	_media_control_elapsed = 0.0
+
+func _on_media_control_accepted(message: Dictionary) -> void:
+	var request_id := int(message.get("request_id", 0))
+	if request_id != _media_control_request_id:
+		return
+	var handle := String(message.get("player_handle", ""))
+	if handle != _media_control_handle or handle.is_empty():
+		_fail_pending_media_control("invalid_media_response")
+		return
+	var verb := _media_control_verb
+	_clear_media_control_request()
+	media_control_accepted.emit(handle, verb)
+
+func _on_media_control_rejected(message: Dictionary) -> void:
+	var request_id := int(message.get("request_id", 0))
+	if request_id != _media_control_request_id:
+		connection_changed.emit("CORE // STALE MEDIA CONTROL REJECTION")
+		return
+	var handle := String(message.get("player_handle", ""))
+	if handle != _media_control_handle:
+		_fail_pending_media_control("invalid_media_response")
+		return
+	var code := String(message.get("code", "control_failed"))
+	var verb := _media_control_verb
+	_clear_media_control_request()
+	if code == "media_unavailable":
+		_set_media_availability("unavailable")
+	_reject_media_control(handle, verb, code)
+
+func _fail_pending_media_control(code: String) -> void:
+	if _media_control_request_id == 0:
+		return
+	var handle := _media_control_handle
+	var verb := _media_control_verb
+	_clear_media_control_request()
+	_reject_media_control(handle, verb, code)
+
+func _reject_media_control(player_handle: String, verb: String, code: String) -> void:
+	var details := _media_control_error_details(code)
+	media_control_rejected.emit(player_handle, verb, code, details["message"], details["retryable"])
+	_emit_ux_status(
+		"media_control_failed",
+		details["message"],
+		"failure",
+		3.0 if details["retryable"] else -1.0
+	)
+
+func _media_control_error_details(code: String) -> Dictionary:
+	match code:
+		"media_unavailable":
+			return {"message": "MEDIA PLAYBACK UNAVAILABLE", "retryable": false}
+		"unknown_player":
+			return {"message": "PLAYER NO LONGER EXISTS", "retryable": false}
+		"stale_handle":
+			return {"message": "PLAYER STALE // REFRESH LIST", "retryable": false}
+		"control_unavailable":
+			return {"message": "CONTROL NOT AVAILABLE", "retryable": false}
+		"core_offline":
+			return {"message": "MEDIA CONTROL OFFLINE", "retryable": true}
+		"connection_lost":
+			return {"message": "CONNECTION LOST // RETRY", "retryable": true}
+		"send_failed":
+			return {"message": "REQUEST FAILED // RETRY", "retryable": true}
+		"media_control_timeout":
+			return {"message": "CONTROL TIMED OUT // RETRY", "retryable": true}
+		"media_busy":
+			return {"message": "MEDIA CONTROL ALREADY IN PROGRESS", "retryable": true}
+		"invalid_player_handle", "invalid_verb":
+			return {"message": "INVALID MEDIA CONTROL", "retryable": false}
+		"invalid_media_response":
+			return {"message": "INVALID MEDIA RESPONSE", "retryable": true}
+		_:
+			return {"message": "MEDIA CONTROL FAILED // RETRY", "retryable": true}
 
 func _schedule_reconnect() -> void:
 	if state == ConnectionState.RECONNECTING:
@@ -692,6 +888,87 @@ func _set_telemetry_availability(availability: String) -> void:
 	telemetry_availability = availability
 	telemetry_availability_changed.emit(availability)
 
+func _on_media_snapshot(message: Dictionary) -> void:
+	if state != ConnectionState.READY:
+		return
+	var request_id := int(message.get("request_id", 0))
+	if _media_request_id != 0 and request_id != _media_request_id:
+		connection_changed.emit("CORE // STALE MEDIA SNAPSHOT")
+		return
+	_media_request_id = 0
+	var snapshot := _normalize_media_snapshot(message.get("snapshot", null))
+	if snapshot.is_empty():
+		_emit_ux_status("media_failed", "INVALID MEDIA DATA", "failure", 3.0)
+		return
+	var sequence := int(snapshot.get("sequence", 0))
+	if sequence <= int(media_snapshot.get("sequence", 0)):
+		return
+	media_snapshot = snapshot
+	_set_media_availability("available")
+	media_snapshot_changed.emit(snapshot)
+
+func _on_media_snapshot_rejected(message: Dictionary) -> void:
+	# Rejections are strictly request-scoped, like telemetry: without a
+	# pending request with a matching ID the frame is fenced so a stale or
+	# unsolicited rejection can never mutate availability.
+	if int(message.get("request_id", 0)) != _media_request_id:
+		return
+	_media_request_id = 0
+	match String(message.get("code", "")):
+		"media_unavailable":
+			_set_media_availability("unavailable")
+		"snapshot_not_ready":
+			_set_media_availability("waiting")
+		_:
+			pass
+
+func _on_notifications(message: Dictionary) -> void:
+	if state != ConnectionState.READY:
+		return
+	var request_id := int(message.get("request_id", 0))
+	if _notifications_request_id != 0 and request_id != _notifications_request_id:
+		connection_changed.emit("CORE // STALE NOTIFICATION FEED")
+		return
+	_notifications_request_id = 0
+	var feed := _normalize_notification_feed(message.get("feed", null))
+	if feed.is_empty():
+		_emit_ux_status("notifications_failed", "INVALID NOTIFICATION DATA", "failure", 3.0)
+		return
+	var sequence := int(feed.get("sequence", 0))
+	if sequence <= int(notification_feed.get("sequence", 0)):
+		return
+	notification_feed = feed
+	_set_notifications_availability("available")
+	notification_feed_changed.emit(feed)
+
+func _on_notifications_rejected(message: Dictionary) -> void:
+	# Strict request correlation, like telemetry: a stale or unsolicited
+	# rejection never mutates notifications availability.
+	if int(message.get("request_id", 0)) != _notifications_request_id:
+		return
+	_notifications_request_id = 0
+	match String(message.get("code", "")):
+		"notifications_unavailable":
+			_set_notifications_availability("unavailable")
+		"monitor_restricted":
+			_set_notifications_availability("restricted")
+		"feed_not_ready":
+			_set_notifications_availability("waiting")
+		_:
+			pass
+
+func _set_media_availability(availability: String) -> void:
+	if media_availability == availability:
+		return
+	media_availability = availability
+	media_availability_changed.emit(availability)
+
+func _set_notifications_availability(availability: String) -> void:
+	if notifications_availability == availability:
+		return
+	notifications_availability = availability
+	notifications_availability_changed.emit(availability)
+
 func _set_session_availability(availability: String) -> void:
 	if availability == session_availability:
 		return
@@ -817,6 +1094,165 @@ func _normalize_window(value: Variant) -> Dictionary:
 		"is_floating": is_floating_value,
 		"is_fullscreen": is_fullscreen_value,
 	}
+
+func _normalize_media_snapshot(value: Variant) -> Dictionary:
+	if not value is Dictionary:
+		return {}
+	var sequence_value = value.get("sequence", null)
+	if not sequence_value is float and not sequence_value is int:
+		return {}
+	if sequence_value < 0:
+		return {}
+	var raw_players = value.get("players", null)
+	if not raw_players is Array:
+		return {}
+	if raw_players.size() > MAX_MEDIA_PLAYERS:
+		return {}
+
+	var players: Array[Dictionary] = []
+	var player_handles := {}
+	for raw_player in raw_players:
+		var player := _normalize_media_player(raw_player)
+		if player.is_empty() or player_handles.has(player.get("handle")):
+			return {}
+		player_handles[player.get("handle")] = true
+		players.append(player)
+
+	var active_handle := ""
+	var active_value = value.get("active_player_handle", null)
+	if active_value != null:
+		if not active_value is String or not player_handles.has(active_value):
+			return {}
+		active_handle = String(active_value)
+
+	return {
+		"sequence": int(sequence_value),
+		"players": players,
+		"active_player_handle": active_handle,
+	}
+
+func _normalize_media_player(value: Variant) -> Dictionary:
+	if not value is Dictionary:
+		return {}
+	var handle_value = value.get("handle", null)
+	if not handle_value is String or String(handle_value).is_empty():
+		return {}
+	var identity_value = value.get("identity", null)
+	if not identity_value is String:
+		return {}
+	var status := String(value.get("status", ""))
+	if not PLAYBACK_STATUSES.has(status):
+		return {}
+	var title_value = value.get("title", null)
+	var artist_value = value.get("artist", null)
+	var album_value = value.get("album", null)
+	for optional_string in [title_value, artist_value, album_value]:
+		if optional_string != null and not optional_string is String:
+			return {}
+	var length_value = value.get("length_micros", null)
+	if length_value != null and not length_value is float and not length_value is int:
+		return {}
+	if length_value != null and length_value < 0:
+		return {}
+	var position_value = value.get("position_micros", null)
+	if not position_value is float and not position_value is int:
+		return {}
+	if position_value < 0:
+		return {}
+	for capability in [
+		"can_play", "can_pause", "can_go_next", "can_go_previous", "can_seek", "can_control"
+	]:
+		if not value.get(capability, null) is bool:
+			return {}
+	if _string_exceeds_budget(identity_value, MAX_STRING_BYTES):
+		return {}
+	for bounded_string in [title_value, artist_value, album_value]:
+		if bounded_string != null and _string_exceeds_budget(bounded_string, MAX_STRING_BYTES):
+			return {}
+	# Optional metadata is flattened with sentinels: absent strings become ""
+	# and an unknown track length becomes -1, matching the session snapshot
+	# convention of never carrying null across the normalized boundary.
+	return {
+		"handle": String(handle_value),
+		"identity": String(identity_value),
+		"status": status,
+		"title": "" if title_value == null else String(title_value),
+		"artist": "" if artist_value == null else String(artist_value),
+		"album": "" if album_value == null else String(album_value),
+		"length_micros": -1 if length_value == null else int(length_value),
+		"position_micros": int(position_value),
+		"can_play": value.get("can_play"),
+		"can_pause": value.get("can_pause"),
+		"can_go_next": value.get("can_go_next"),
+		"can_go_previous": value.get("can_go_previous"),
+		"can_seek": value.get("can_seek"),
+		"can_control": value.get("can_control"),
+	}
+
+func _normalize_notification_feed(value: Variant) -> Dictionary:
+	if not value is Dictionary:
+		return {}
+	var sequence_value = value.get("sequence", null)
+	if not sequence_value is float and not sequence_value is int:
+		return {}
+	if sequence_value < 0:
+		return {}
+	var raw_notifications = value.get("notifications", null)
+	if not raw_notifications is Array:
+		return {}
+	if raw_notifications.size() > MAX_NOTIFICATIONS:
+		return {}
+
+	var notifications: Array[Dictionary] = []
+	var notification_handles := {}
+	for raw_notification in raw_notifications:
+		var notification := _normalize_notification(raw_notification)
+		if notification.is_empty() or notification_handles.has(notification.get("handle")):
+			return {}
+		notification_handles[notification.get("handle")] = true
+		notifications.append(notification)
+
+	return {
+		"sequence": int(sequence_value),
+		"notifications": notifications,
+	}
+
+func _normalize_notification(value: Variant) -> Dictionary:
+	if not value is Dictionary:
+		return {}
+	var handle_value = value.get("handle", null)
+	if not handle_value is String or String(handle_value).is_empty():
+		return {}
+	var app_name_value = value.get("app_name", null)
+	var summary_value = value.get("summary", null)
+	var body_value = value.get("body", null)
+	for required_string in [app_name_value, summary_value, body_value]:
+		if not required_string is String:
+			return {}
+	var urgency := String(value.get("urgency", ""))
+	if not NOTIFICATION_URGENCIES.has(urgency):
+		return {}
+	var timestamp_value = value.get("timestamp_unix_ms", null)
+	if not timestamp_value is float and not timestamp_value is int:
+		return {}
+	if timestamp_value < 0:
+		return {}
+	for bounded_string in [app_name_value, summary_value, body_value]:
+		if _string_exceeds_budget(bounded_string, MAX_STRING_BYTES):
+			return {}
+	return {
+		"handle": String(handle_value),
+		"app_name": String(app_name_value),
+		"summary": String(summary_value),
+		"body": String(body_value),
+		"urgency": urgency,
+		"timestamp_unix_ms": int(timestamp_value),
+	}
+
+func _string_exceeds_budget(value: String, budget: int) -> bool:
+	# The protocol bounds UTF-8 bytes, not code points, so measure bytes the
+	# same way Core does.
+	return value.to_utf8_buffer().size() > budget
 
 func _on_launch_rejected(message: Dictionary) -> void:
 	var request_id := int(message.get("request_id", 0))
