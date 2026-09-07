@@ -1,5 +1,6 @@
 mod apps;
 mod config;
+mod dbus;
 mod hyprland;
 mod hyprland_events;
 #[cfg(test)]
@@ -24,6 +25,7 @@ async fn main() -> Result<()> {
 
     let config = config::CoreConfig::from_environment()?;
     let hyprland_capabilities = hyprland::probe_from_environment().await;
+    let dbus_capabilities = dbus::probe_from_environment().await;
     let application_directories = apps::application_directories()?;
     let desktop_files = apps::discover_desktop_files(&application_directories)?;
     let applications = apps::load_applications(&desktop_files);
@@ -55,6 +57,7 @@ async fn main() -> Result<()> {
         ?hyprland_capabilities,
         "Hyprland capability probe completed"
     );
+    info!(?dbus_capabilities, "D-Bus capability probe completed");
 
     let session_runtime = start_session_store(&hyprland_capabilities);
     let telemetry_enabled = config.telemetry.enabled;
