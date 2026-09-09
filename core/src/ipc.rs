@@ -26,8 +26,12 @@ use velora_protocol::{
     WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
 };
 
-use crate::{session_store::SessionStore, telemetry::runtime::TelemetryStore};
+use crate::{
+    dbus::NotificationAvailability, notifications::NotificationStore, session_store::SessionStore,
+    telemetry::runtime::TelemetryStore,
+};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
     config: CoreConfig,
     applications: Arc<[Application]>,
@@ -36,6 +40,8 @@ pub(crate) async fn serve(
     session: Option<Arc<SessionStore>>,
     telemetry: Arc<TelemetryStore>,
     telemetry_enabled: bool,
+    notifications: Arc<NotificationStore>,
+    notifications_enabled: bool,
 ) -> Result<()> {
     serve_until(
         config,
@@ -45,6 +51,8 @@ pub(crate) async fn serve(
         session,
         telemetry,
         telemetry_enabled,
+        notifications,
+        notifications_enabled,
         async {
             tokio::signal::ctrl_c()
                 .await
@@ -63,6 +71,8 @@ async fn serve_until<L, F>(
     session: Option<Arc<SessionStore>>,
     telemetry: Arc<TelemetryStore>,
     telemetry_enabled: bool,
+    notifications: Arc<NotificationStore>,
+    notifications_enabled: bool,
     shutdown: F,
 ) -> Result<()>
 where
@@ -87,6 +97,7 @@ where
                     let hyprland_capabilities = hyprland_capabilities.clone();
                     let session = session.clone();
                     let telemetry = Arc::clone(&telemetry);
+                    let notifications = Arc::clone(&notifications);
                     tokio::spawn(async move {
                         if let Err(error) = handle_connection_with_services(
                             stream,
@@ -96,6 +107,8 @@ where
                             session,
                             telemetry,
                             telemetry_enabled,
+                            notifications,
+                            notifications_enabled,
                         )
                         .await
                         {
@@ -190,10 +203,13 @@ where
         session,
         Arc::new(TelemetryStore::default()),
         true,
+        Arc::new(NotificationStore::new()),
+        false,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection_with_services<L>(
     stream: UnixStream,
     applications: Arc<[Application]>,
@@ -202,6 +218,8 @@ async fn handle_connection_with_services<L>(
     session: Option<Arc<SessionStore>>,
     telemetry: Arc<TelemetryStore>,
     telemetry_enabled: bool,
+    notifications: Arc<NotificationStore>,
+    notifications_enabled: bool,
 ) -> Result<()>
 where
     L: ApplicationLauncher + 'static,
@@ -431,21 +449,26 @@ where
                     retryable: true,
                 },
             },
-            // Media and notification stores land in P5.03+; until then Core
-            // answers with the typed unavailable/disabled paths so the v5
-            // contract round-trips without exposing any D-Bus state.
+            // The media store lands in P5.03+; until then Core answers with the
+            // typed unavailable path so the v5 contract round-trips without
+            // exposing any D-Bus state.
             Ok(Request::GetMediaSnapshot { request_id, .. }) => Response::MediaSnapshotRejected {
                 protocol_version: PROTOCOL_VERSION,
                 request_id,
                 code: MediaSnapshotError::MediaUnavailable,
                 retryable: false,
             },
-            Ok(Request::GetNotifications { request_id, .. }) => Response::NotificationsRejected {
-                protocol_version: PROTOCOL_VERSION,
-                request_id,
-                code: NotificationsError::NotificationsUnavailable,
-                retryable: false,
-            },
+            Ok(Request::GetNotifications { request_id, .. }) if !notifications_enabled => {
+                Response::NotificationsRejected {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id,
+                    code: NotificationsError::NotificationsUnavailable,
+                    retryable: false,
+                }
+            }
+            Ok(Request::GetNotifications { request_id, .. }) => {
+                notifications_response(request_id, &notifications)
+            }
             Ok(Request::SendMediaControl {
                 request_id,
                 player_handle,
@@ -490,6 +513,40 @@ async fn wait_for_snapshot_update(
     match receiver {
         Some(receiver) => receiver.changed().await,
         None => std::future::pending().await,
+    }
+}
+
+/// Serve the bounded notification feed with typed, fail-closed outcomes.
+/// `Restricted` (denied monitoring) never serves a feed; `Unavailable` means
+/// the monitor could not observe; an empty-but-available monitor reports
+/// `FeedNotReady` so the frontend can distinguish "no notifications yet".
+fn notifications_response(request_id: u64, store: &NotificationStore) -> Response {
+    match store.availability() {
+        NotificationAvailability::Restricted => Response::NotificationsRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            code: NotificationsError::MonitorRestricted,
+            retryable: false,
+        },
+        NotificationAvailability::Unavailable => Response::NotificationsRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            code: NotificationsError::NotificationsUnavailable,
+            retryable: true,
+        },
+        NotificationAvailability::Available => match store.current() {
+            Some(feed) => Response::Notifications {
+                protocol_version: PROTOCOL_VERSION,
+                request_id,
+                feed: (*feed).clone(),
+            },
+            None => Response::NotificationsRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id,
+                code: NotificationsError::FeedNotReady,
+                retryable: true,
+            },
+        },
     }
 }
 
@@ -844,7 +901,7 @@ impl Drop for SocketGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::launch::LaunchError;
+    use crate::{launch::LaunchError, notifications::NotifyObservation};
     use std::{
         future::ready, os::unix::fs::symlink, os::unix::net::UnixListener as StdUnixListener,
         sync::Mutex,
@@ -852,7 +909,7 @@ mod tests {
     use tempfile::tempdir;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
     use tokio::sync::oneshot;
-    use velora_protocol::MediaControlVerb;
+    use velora_protocol::{MediaControlVerb, NotificationUrgency};
 
     #[derive(Clone, Copy)]
     enum MockLaunchOutcome {
@@ -1367,6 +1424,7 @@ mod tests {
             let config = CoreConfig {
                 socket_path: socket_path.clone(),
                 telemetry: crate::config::TelemetryPolicy::default(),
+                notifications: crate::config::NotificationsPolicy::default(),
             };
             let launcher = Arc::new(MockLauncher::new(MockLaunchOutcome::Accepted(
                 5000 + generation,
@@ -1380,6 +1438,8 @@ mod tests {
                 dead_session_store(),
                 Arc::new(TelemetryStore::default()),
                 true,
+                Arc::new(NotificationStore::new()),
+                false,
                 async move {
                     shutdown_rx.await.context("test shutdown sender dropped")?;
                     Ok(())
@@ -1545,6 +1605,8 @@ mod tests {
             dead_session_store(),
             Arc::new(TelemetryStore::default()),
             false,
+            Arc::new(NotificationStore::new()),
+            false,
         ));
         let mut reader = BufReader::new(client);
 
@@ -1652,6 +1714,218 @@ mod tests {
                 request_id: 103,
                 player_handle: "player:opaque-1".to_owned(),
                 code: MediaControlError::ControlUnavailable,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    fn populated_notification_store() -> Arc<NotificationStore> {
+        let store = Arc::new(NotificationStore::new());
+        store.set_availability(NotificationAvailability::Available);
+        store.observe(
+            NotifyObservation {
+                app_name: "Chat".to_owned(),
+                summary: "Hello".to_owned(),
+                body: "World".to_owned(),
+                urgency: NotificationUrgency::Normal,
+            },
+            1_000,
+        );
+        store
+    }
+
+    #[tokio::test]
+    async fn notifications_disabled_returns_typed_unavailable() {
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            Arc::new(NotificationStore::new()),
+            false,
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetNotifications {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 111,
+                },
+            )
+            .await,
+            Response::NotificationsRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 111,
+                code: NotificationsError::NotificationsUnavailable,
+                retryable: false,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn denied_monitoring_returns_typed_restricted() {
+        let store = Arc::new(NotificationStore::new());
+        store.set_availability(NotificationAvailability::Restricted);
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            store,
+            true,
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetNotifications {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 112,
+                },
+            )
+            .await,
+            Response::NotificationsRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 112,
+                code: NotificationsError::MonitorRestricted,
+                retryable: false,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn serves_the_bounded_notification_feed() {
+        let store = populated_notification_store();
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            store,
+            true,
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        let response = send_request(
+            &mut reader,
+            &Request::GetNotifications {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 113,
+            },
+        )
+        .await;
+        let Response::Notifications {
+            request_id, feed, ..
+        } = response
+        else {
+            panic!("expected a notification feed");
+        };
+        assert_eq!(request_id, 113);
+        assert_eq!(feed.sequence, 1);
+        assert_eq!(feed.notifications.len(), 1);
+        assert_eq!(feed.notifications[0].app_name, "Chat");
+        assert_eq!(feed.notifications[0].handle, "notification:1");
+        feed.validate().unwrap();
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn available_monitor_without_feed_reports_not_ready() {
+        let store = Arc::new(NotificationStore::new());
+        store.set_availability(NotificationAvailability::Available);
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            store,
+            true,
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetNotifications {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 114,
+                },
+            )
+            .await,
+            Response::NotificationsRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 114,
+                code: NotificationsError::FeedNotReady,
+                retryable: true,
             }
         );
 

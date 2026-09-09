@@ -7,6 +7,7 @@ use velora_protocol::{
 
 const TELEMETRY_INTERVAL_ENV: &str = "VELORA_TELEMETRY_INTERVAL_MS";
 const TELEMETRY_ENABLED_ENV: &str = "VELORA_TELEMETRY_ENABLED";
+const NOTIFICATIONS_ENABLED_ENV: &str = "VELORA_NOTIFICATIONS_ENABLED";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TelemetryPolicy {
@@ -67,10 +68,42 @@ impl TelemetryPolicy {
     }
 }
 
+/// Privacy gate for the notification observer. Monitoring every notification
+/// is the most privacy-sensitive capability Core has, so it is explicitly
+/// toggleable; when disabled Core never opens a monitor connection and answers
+/// notification requests with a typed unavailable result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotificationsPolicy {
+    pub enabled: bool,
+}
+
+impl Default for NotificationsPolicy {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+impl NotificationsPolicy {
+    fn from_environment() -> Result<Self> {
+        Ok(Self {
+            enabled: match env::var(NOTIFICATIONS_ENABLED_ENV) {
+                Ok(value) => value.parse::<bool>().with_context(|| {
+                    format!("{NOTIFICATIONS_ENABLED_ENV} must be true or false")
+                })?,
+                Err(env::VarError::NotPresent) => Self::default().enabled,
+                Err(env::VarError::NotUnicode(_)) => {
+                    bail!("{NOTIFICATIONS_ENABLED_ENV} must contain valid UTF-8")
+                }
+            },
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CoreConfig {
     pub socket_path: PathBuf,
     pub telemetry: TelemetryPolicy,
+    pub notifications: NotificationsPolicy,
 }
 
 impl CoreConfig {
@@ -78,6 +111,7 @@ impl CoreConfig {
         Ok(Self {
             socket_path: default_socket_path()?,
             telemetry: TelemetryPolicy::from_environment()?,
+            notifications: NotificationsPolicy::from_environment()?,
         })
     }
 }
@@ -141,6 +175,34 @@ mod tests {
             assert!(TelemetryPolicy::from_environment().is_err());
 
             env::remove_var(TELEMETRY_ENABLED_ENV);
+        }
+    }
+
+    #[test]
+    fn notifications_policy_defaults_to_enabled() {
+        let policy = NotificationsPolicy::default();
+        assert!(policy.enabled);
+    }
+
+    #[test]
+    fn notifications_env_var_parses_true_and_false() {
+        unsafe {
+            env::remove_var(NOTIFICATIONS_ENABLED_ENV);
+            let policy = NotificationsPolicy::from_environment().unwrap();
+            assert!(policy.enabled);
+
+            env::set_var(NOTIFICATIONS_ENABLED_ENV, "false");
+            let policy = NotificationsPolicy::from_environment().unwrap();
+            assert!(!policy.enabled);
+
+            env::set_var(NOTIFICATIONS_ENABLED_ENV, "true");
+            let policy = NotificationsPolicy::from_environment().unwrap();
+            assert!(policy.enabled);
+
+            env::set_var(NOTIFICATIONS_ENABLED_ENV, "maybe");
+            assert!(NotificationsPolicy::from_environment().is_err());
+
+            env::remove_var(NOTIFICATIONS_ENABLED_ENV);
         }
     }
 }
