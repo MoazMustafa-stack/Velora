@@ -8,6 +8,7 @@ mod hyprland_integration;
 mod ipc;
 mod launch;
 mod mpris;
+mod mpris_events;
 mod notifications;
 mod session_store;
 pub mod telemetry;
