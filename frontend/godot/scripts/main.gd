@@ -6,9 +6,11 @@ const SessionBinding = preload("res://scripts/session_binding.gd")
 @onready var backend: Node = $BackendClient
 @onready var hud: CanvasLayer = $HUD
 @onready var workspace_map: CanvasLayer = $WorkspaceMap
+@onready var notification_feed: CanvasLayer = $NotificationFeed
 
 var menu_open := false
 var map_open := false
+var feed_open := false
 var _stations: Array[Node] = []
 
 func _ready() -> void:
@@ -25,6 +27,12 @@ func _ready() -> void:
 	backend.session_availability_changed.connect(_on_session_availability_changed)
 	backend.telemetry_snapshot_changed.connect(hud.set_telemetry_snapshot)
 	backend.telemetry_availability_changed.connect(hud.set_telemetry_availability)
+	backend.notification_feed_changed.connect(notification_feed.update_feed)
+	backend.notifications_availability_changed.connect(notification_feed.set_availability)
+	notification_feed.feed_closed.connect(_on_feed_closed)
+	notification_feed.set_availability(backend.notifications_availability)
+	if not backend.notification_feed.is_empty():
+		notification_feed.update_feed(backend.notification_feed)
 	workspace_map.map_closed.connect(_on_map_closed)
 	workspace_map.switch_requested.connect(backend.request_switch_workspace)
 	if backend.session_availability != "unknown":
@@ -34,11 +42,16 @@ func _ready() -> void:
 	hud.set_status("VELORA // POCKET TERMINAL")
 
 func _unhandled_input(event: InputEvent) -> void:
-	if menu_open or map_open or not event is InputEventKey:
+	if menu_open or map_open or feed_open or not event is InputEventKey:
 		return
-	if event.pressed and not event.echo and event.keycode in [KEY_TAB, KEY_M]:
+	if not event.pressed or event.echo:
+		return
+	if event.keycode in [KEY_TAB, KEY_M]:
 		get_viewport().set_input_as_handled()
 		_toggle_workspace_map()
+	elif event.keycode == KEY_N:
+		get_viewport().set_input_as_handled()
+		_toggle_notification_feed()
 
 func _toggle_workspace_map() -> void:
 	map_open = true
@@ -47,6 +60,18 @@ func _toggle_workspace_map() -> void:
 
 func _on_map_closed() -> void:
 	map_open = false
+	player.set_input_enabled(true)
+
+func _toggle_notification_feed() -> void:
+	feed_open = true
+	player.set_input_enabled(false)
+	# Scene-driven refresh: the client fetches once per connection, so the
+	# panel asks for a fresh single-flight feed whenever it is inspected.
+	backend.request_notifications()
+	notification_feed.open()
+
+func _on_feed_closed() -> void:
+	feed_open = false
 	player.set_input_enabled(true)
 
 func _on_session_snapshot_changed(snapshot: Dictionary) -> void:
