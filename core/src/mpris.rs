@@ -57,7 +57,6 @@ pub(crate) enum MprisError {
 
 /// Read one MPRIS player's normalized state from both interfaces. This is the
 /// only entry point for the rest of Core; it never writes to the bus.
-#[allow(dead_code)]
 pub(crate) async fn read_player(
     connection: &Connection,
     player_name: &str,

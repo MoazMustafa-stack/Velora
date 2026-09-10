@@ -7,6 +7,7 @@ mod hyprland_events;
 mod hyprland_integration;
 mod ipc;
 mod launch;
+mod media_store;
 mod mpris;
 mod mpris_events;
 mod notifications;
@@ -67,6 +68,7 @@ async fn main() -> Result<()> {
     let telemetry_runtime = start_telemetry_sampler(config.telemetry);
     let notifications_enabled = config.notifications.enabled;
     let notifications_runtime = start_notification_monitor(config.notifications);
+    let media_runtime = start_media_store(&dbus_capabilities);
     let result = ipc::serve(
         config,
         applications.into(),
@@ -79,11 +81,15 @@ async fn main() -> Result<()> {
         telemetry_enabled,
         Arc::clone(&notifications_runtime.store),
         notifications_enabled,
+        media_runtime
+            .as_ref()
+            .map(|runtime| Arc::clone(&runtime.store)),
     )
     .await;
     drop(session_runtime);
     drop(telemetry_runtime);
     drop(notifications_runtime);
+    drop(media_runtime);
     result
 }
 
@@ -110,6 +116,21 @@ fn start_notification_monitor(policy: config::NotificationsPolicy) -> Notificati
         tokio::spawn(notifications::run(Arc::clone(&store), shutdown_rx));
     }
     NotificationRuntime { store, shutdown_tx }
+}
+
+/// When MPRIS media observation is available, keep the authoritative snapshot
+/// warm in the background (discovery/signal listener plus the media store),
+/// mirroring `start_telemetry_sampler`. A missing or unavailable bus leaves the
+/// runtime absent so the IPC handler answers with the typed unavailable path.
+fn start_media_store(dbus: &dbus::DbusCapabilities) -> Option<MediaRuntime> {
+    if dbus.media != dbus::MediaAvailability::Available {
+        return None;
+    }
+    let store = Arc::new(media_store::MediaStore::from_environment());
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let runner = Arc::clone(&store);
+    tokio::spawn(runner.run_with_listener(shutdown_rx, mpris_events::ListenerConfig::production()));
+    Some(MediaRuntime { store, shutdown_tx })
 }
 
 /// When Hyprland is fully available, keep an authoritative snapshot warm in
@@ -161,6 +182,17 @@ struct NotificationRuntime {
 }
 
 impl Drop for NotificationRuntime {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+}
+
+struct MediaRuntime {
+    store: Arc<media_store::MediaStore>,
+    shutdown_tx: watch::Sender<bool>,
+}
+
+impl Drop for MediaRuntime {
     fn drop(&mut self) {
         let _ = self.shutdown_tx.send(true);
     }

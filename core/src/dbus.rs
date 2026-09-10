@@ -15,14 +15,13 @@
 use std::{env, ffi::OsStr, time::Duration};
 use thiserror::Error;
 use tokio::time::timeout;
+use velora_protocol::MAX_MEDIA_PLAYERS;
 use zbus::{Connection, Proxy, names::OwnedBusName};
 
 /// Session-bus address override used by tests, mirroring the `VELORA_SOCKET`
 /// rule. Production falls back to `DBUS_SESSION_BUS_ADDRESS` via zbus.
 const SESSION_BUS_ADDRESS_ENV: &str = "VELORA_SESSION_BUS_ADDRESS";
 
-/// Maximum number of MPRIS players reported in a single probe.
-const MAX_MPRIS_PLAYERS: usize = 16;
 /// Maximum length of a reported MPRIS player name.
 const MAX_MPRIS_NAME_CHARS: usize = 256;
 /// Maximum length of a Notifications daemon server-information field.
@@ -223,13 +222,22 @@ async fn list_names(connection: &Connection) -> Result<Vec<OwnedBusName>, DbusEr
     proxy.list_names().await.map_err(map_fdo_error)
 }
 
+/// List the `org.mpris.MediaPlayer2.*` well-known names currently owned on the
+/// session bus. This is the media store's discovery half (P5.05): filtered and
+/// bounded to [`MAX_MEDIA_PLAYERS`], so a hostile or overflowing name list can
+/// never grow the snapshot unboundedly.
+pub(crate) async fn list_players(connection: &Connection) -> Result<Vec<String>, DbusError> {
+    let names = list_names(connection).await?;
+    Ok(mpris_player_names(names.iter().map(|name| name.as_str())))
+}
+
 /// Keep only `org.mpris.MediaPlayer2.*` well-known names, bounded and trimmed.
 fn mpris_player_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     names
         .into_iter()
         .filter(|name| name.starts_with(MPRIS_NAME_PREFIX))
         .map(|name| bounded_string(name, MAX_MPRIS_NAME_CHARS))
-        .take(MAX_MPRIS_PLAYERS)
+        .take(MAX_MEDIA_PLAYERS)
         .collect()
 }
 
@@ -344,13 +352,13 @@ mod tests {
 
     #[test]
     fn caps_mpris_players_at_the_probe_limit() {
-        let names: Vec<String> = (0..MAX_MPRIS_PLAYERS + 5)
+        let names: Vec<String> = (0..MAX_MEDIA_PLAYERS + 5)
             .map(|i| format!("org.mpris.MediaPlayer2.player{i}"))
             .collect();
 
         let players = mpris_player_names(names.iter().map(String::as_str));
 
-        assert_eq!(players.len(), MAX_MPRIS_PLAYERS);
+        assert_eq!(players.len(), MAX_MEDIA_PLAYERS);
     }
 
     #[test]

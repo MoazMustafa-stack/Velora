@@ -27,8 +27,8 @@ use velora_protocol::{
 };
 
 use crate::{
-    dbus::NotificationAvailability, notifications::NotificationStore, session_store::SessionStore,
-    telemetry::runtime::TelemetryStore,
+    dbus::NotificationAvailability, media_store::MediaStore, notifications::NotificationStore,
+    session_store::SessionStore, telemetry::runtime::TelemetryStore,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -42,6 +42,7 @@ pub(crate) async fn serve(
     telemetry_enabled: bool,
     notifications: Arc<NotificationStore>,
     notifications_enabled: bool,
+    media: Option<Arc<MediaStore>>,
 ) -> Result<()> {
     serve_until(
         config,
@@ -53,6 +54,7 @@ pub(crate) async fn serve(
         telemetry_enabled,
         notifications,
         notifications_enabled,
+        media,
         async {
             tokio::signal::ctrl_c()
                 .await
@@ -73,6 +75,7 @@ async fn serve_until<L, F>(
     telemetry_enabled: bool,
     notifications: Arc<NotificationStore>,
     notifications_enabled: bool,
+    media: Option<Arc<MediaStore>>,
     shutdown: F,
 ) -> Result<()>
 where
@@ -98,6 +101,7 @@ where
                     let session = session.clone();
                     let telemetry = Arc::clone(&telemetry);
                     let notifications = Arc::clone(&notifications);
+                    let media = media.clone();
                     tokio::spawn(async move {
                         if let Err(error) = handle_connection_with_services(
                             stream,
@@ -109,6 +113,7 @@ where
                             telemetry_enabled,
                             notifications,
                             notifications_enabled,
+                            media,
                         )
                         .await
                         {
@@ -205,6 +210,7 @@ where
         true,
         Arc::new(NotificationStore::new()),
         false,
+        None,
     )
     .await
 }
@@ -220,6 +226,7 @@ async fn handle_connection_with_services<L>(
     telemetry_enabled: bool,
     notifications: Arc<NotificationStore>,
     notifications_enabled: bool,
+    media: Option<Arc<MediaStore>>,
 ) -> Result<()>
 where
     L: ApplicationLauncher + 'static,
@@ -449,15 +456,11 @@ where
                     retryable: true,
                 },
             },
-            // The media store lands in P5.03+; until then Core answers with the
-            // typed unavailable path so the v5 contract round-trips without
-            // exposing any D-Bus state.
-            Ok(Request::GetMediaSnapshot { request_id, .. }) => Response::MediaSnapshotRejected {
-                protocol_version: PROTOCOL_VERSION,
-                request_id,
-                code: MediaSnapshotError::MediaUnavailable,
-                retryable: false,
-            },
+            // The media store serves the cached authoritative snapshot and
+            // falls back to one on-demand refresh when nothing is cached yet.
+            Ok(Request::GetMediaSnapshot { request_id, .. }) => {
+                media_snapshot_response(request_id, media.as_deref()).await
+            }
             Ok(Request::GetNotifications { request_id, .. }) if !notifications_enabled => {
                 Response::NotificationsRejected {
                     protocol_version: PROTOCOL_VERSION,
@@ -546,6 +549,38 @@ fn notifications_response(request_id: u64, store: &NotificationStore) -> Respons
                 code: NotificationsError::FeedNotReady,
                 retryable: true,
             },
+        },
+    }
+}
+
+/// Serve the authoritative cached media snapshot; when nothing is cached yet
+/// and media observation is available, fall back to one on-demand refresh.
+/// Any failure degrades to the typed rejection instead of an error response.
+async fn media_snapshot_response(request_id: u64, media: Option<&MediaStore>) -> Response {
+    let Some(store) = media else {
+        return Response::MediaSnapshotRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            code: MediaSnapshotError::MediaUnavailable,
+            retryable: false,
+        };
+    };
+
+    if store.current().is_none() {
+        let _ = store.refresh().await;
+    }
+
+    match store.current() {
+        Some(snapshot) => Response::MediaSnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            snapshot: (*snapshot).clone(),
+        },
+        None => Response::MediaSnapshotRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            code: MediaSnapshotError::SnapshotNotReady,
+            retryable: true,
         },
     }
 }
@@ -909,7 +944,7 @@ mod tests {
     use tempfile::tempdir;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
     use tokio::sync::oneshot;
-    use velora_protocol::{MediaControlVerb, NotificationUrgency};
+    use velora_protocol::{MediaControlVerb, MediaPlayer, NotificationUrgency, PlaybackStatus};
 
     #[derive(Clone, Copy)]
     enum MockLaunchOutcome {
@@ -1440,6 +1475,7 @@ mod tests {
                 true,
                 Arc::new(NotificationStore::new()),
                 false,
+                None,
                 async move {
                     shutdown_rx.await.context("test shutdown sender dropped")?;
                     Ok(())
@@ -1607,6 +1643,7 @@ mod tests {
             false,
             Arc::new(NotificationStore::new()),
             false,
+            None,
         ));
         let mut reader = BufReader::new(client);
 
@@ -1749,6 +1786,7 @@ mod tests {
             true,
             Arc::new(NotificationStore::new()),
             false,
+            None,
         ));
         let mut reader = BufReader::new(client);
         let hello = send_request(
@@ -1798,6 +1836,7 @@ mod tests {
             true,
             store,
             true,
+            None,
         ));
         let mut reader = BufReader::new(client);
         let hello = send_request(
@@ -1846,6 +1885,7 @@ mod tests {
             true,
             store,
             true,
+            None,
         ));
         let mut reader = BufReader::new(client);
         let hello = send_request(
@@ -1899,6 +1939,7 @@ mod tests {
             true,
             store,
             true,
+            None,
         ));
         let mut reader = BufReader::new(client);
         let hello = send_request(
@@ -1925,6 +1966,195 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 request_id: 114,
                 code: NotificationsError::FeedNotReady,
+                retryable: true,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    fn test_media_player(handle: &str, status: PlaybackStatus) -> MediaPlayer {
+        MediaPlayer {
+            handle: handle.to_owned(),
+            identity: "Spotify".to_owned(),
+            status,
+            title: Some("Velora Theme".to_owned()),
+            artist: Some("Velora".to_owned()),
+            album: Some("Phase 5".to_owned()),
+            length_micros: Some(250_000_000),
+            position_micros: 12_500_000,
+            can_play: true,
+            can_pause: true,
+            can_go_next: true,
+            can_go_previous: true,
+            can_seek: true,
+            can_control: true,
+        }
+    }
+
+    fn populated_media_store() -> Arc<MediaStore> {
+        let store = Arc::new(MediaStore::new(None));
+        store
+            .apply(vec![test_media_player(
+                "player:opaque-1",
+                PlaybackStatus::Playing,
+            )])
+            .unwrap();
+        store
+    }
+
+    #[tokio::test]
+    async fn serves_the_authoritative_media_snapshot() {
+        let store = populated_media_store();
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            Arc::new(NotificationStore::new()),
+            false,
+            Some(store),
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        let response = send_request(
+            &mut reader,
+            &Request::GetMediaSnapshot {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 121,
+            },
+        )
+        .await;
+        let Response::MediaSnapshot {
+            request_id,
+            snapshot,
+            ..
+        } = response
+        else {
+            panic!("expected a media snapshot");
+        };
+        assert_eq!(request_id, 121);
+        assert_eq!(snapshot.sequence, 1);
+        assert_eq!(snapshot.players.len(), 1);
+        assert_eq!(snapshot.players[0].handle, "player:opaque-1");
+        assert_eq!(
+            snapshot.active_player_handle.as_deref(),
+            Some("player:opaque-1")
+        );
+        snapshot.validate().unwrap();
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn media_unavailable_returns_typed_unavailable() {
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            Arc::new(NotificationStore::new()),
+            false,
+            None,
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetMediaSnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 122,
+                },
+            )
+            .await,
+            Response::MediaSnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 122,
+                code: MediaSnapshotError::MediaUnavailable,
+                retryable: false,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn available_media_without_snapshot_reports_not_ready() {
+        // A store with no cached snapshot and an unreachable bus: the on-demand
+        // refresh fails fast and the handler reports a typed not-ready result.
+        let store = Arc::new(MediaStore::new(Some(std::ffi::OsString::from(
+            "unix:path=/nonexistent/velora-test-media-bus",
+        ))));
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            Arc::new(NotificationStore::new()),
+            false,
+            Some(store),
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::GetMediaSnapshot {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 123,
+                },
+            )
+            .await,
+            Response::MediaSnapshotRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 123,
+                code: MediaSnapshotError::SnapshotNotReady,
                 retryable: true,
             }
         );

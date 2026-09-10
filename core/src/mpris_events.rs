@@ -27,7 +27,6 @@
 
 use std::{
     collections::HashMap,
-    env,
     ffi::OsStr,
     future::poll_fn,
     pin::Pin,
@@ -42,10 +41,6 @@ use tokio::{
 };
 use tracing::{debug, warn};
 use zbus::{Connection, MatchRule, Message, MessageStream, message::Type, zvariant::OwnedValue};
-
-/// Session-bus address override used by tests, mirroring the `VELORA_SOCKET`
-/// and `VELORA_SESSION_BUS_ADDRESS` rules in the D-Bus probe.
-const SESSION_BUS_ADDRESS_ENV: &str = "VELORA_SESSION_BUS_ADDRESS";
 
 /// The bus-driver interface and well-known name that emits `NameOwnerChanged`.
 const DBUS_INTERFACE: &str = "org.freedesktop.DBus";
@@ -92,7 +87,6 @@ pub(crate) struct ListenerConfig {
 }
 
 impl ListenerConfig {
-    #[allow(dead_code)]
     pub(crate) fn production() -> Self {
         Self {
             initial_backoff: Duration::from_millis(500),
@@ -115,27 +109,9 @@ pub(crate) enum ListenerError {
     TimedOut,
 }
 
-/// Run the discovery/signal listener until shutdown, reading the session-bus
-/// address override from the environment (production entry point).
-#[allow(dead_code)]
-pub(crate) async fn run_from_environment(
-    invalidation_tx: mpsc::Sender<()>,
-    shutdown: watch::Receiver<bool>,
-    config: ListenerConfig,
-) {
-    run_listener(
-        env::var_os(SESSION_BUS_ADDRESS_ENV).as_deref(),
-        invalidation_tx,
-        shutdown,
-        config,
-    )
-    .await;
-}
-
 /// Long-running listener loop. Connects, subscribes, and marks the dirty slot
 /// on every relevant signal until the streams close or shutdown is requested,
 /// then reconnects with bounded exponential backoff plus jitter.
-#[allow(dead_code)]
 pub(crate) async fn run_listener(
     address: Option<&OsStr>,
     invalidation_tx: mpsc::Sender<()>,
