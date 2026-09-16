@@ -21,9 +21,9 @@ use tokio::{
 use tracing::{info, warn};
 use velora_protocol::{
     Application, HANDSHAKE_TIMEOUT_SECONDS, HyprlandAvailability, HyprlandCapabilities,
-    MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, MediaControlError, MediaSnapshotError,
-    NotificationsError, PROTOCOL_VERSION, Request, Response, SERVER_NAME, TelemetrySnapshotError,
-    WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
+    MAX_APPLICATION_PAGE_SIZE, MAX_MESSAGE_BYTES, MediaControlError, MediaControlVerb,
+    MediaSnapshotError, NotificationsError, PROTOCOL_VERSION, Request, Response, SERVER_NAME,
+    TelemetrySnapshotError, WindowFocusError, WorkspaceSnapshotError, WorkspaceSwitchError,
 };
 
 use crate::{
@@ -475,13 +475,9 @@ where
             Ok(Request::SendMediaControl {
                 request_id,
                 player_handle,
+                verb,
                 ..
-            }) => Response::MediaControlRejected {
-                protocol_version: PROTOCOL_VERSION,
-                request_id,
-                player_handle,
-                code: MediaControlError::ControlUnavailable,
-            },
+            }) => media_control_response(request_id, &player_handle, verb, media.as_deref()).await,
             Ok(Request::Hello { .. }) => {
                 Response::error("already_handshaken", "hello has already completed", false)
             }
@@ -581,6 +577,40 @@ async fn media_snapshot_response(request_id: u64, media: Option<&MediaStore>) ->
             request_id,
             code: MediaSnapshotError::SnapshotNotReady,
             retryable: true,
+        },
+    }
+}
+
+/// Fail-closed media control: dispatch only through a snapshot-issued opaque
+/// handle plus one allowlisted verb. The store re-validates the handle against
+/// the live bus and maps the verb to a fixed MPRIS method; the IPC layer never
+/// supplies a bus name, method name, or argument.
+async fn media_control_response(
+    request_id: u64,
+    player_handle: &str,
+    verb: MediaControlVerb,
+    media: Option<&MediaStore>,
+) -> Response {
+    let Some(store) = media else {
+        return Response::MediaControlRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            player_handle: player_handle.to_owned(),
+            code: MediaControlError::MediaUnavailable,
+        };
+    };
+
+    match store.control(player_handle, verb).await {
+        Ok(()) => Response::MediaControlAccepted {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            player_handle: player_handle.to_owned(),
+        },
+        Err(code) => Response::MediaControlRejected {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            player_handle: player_handle.to_owned(),
+            code,
         },
     }
 }
@@ -1750,7 +1780,7 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 request_id: 103,
                 player_handle: "player:opaque-1".to_owned(),
-                code: MediaControlError::ControlUnavailable,
+                code: MediaControlError::MediaUnavailable,
             }
         );
 
@@ -2057,6 +2087,133 @@ mod tests {
             Some("player:opaque-1")
         );
         snapshot.validate().unwrap();
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn media_control_rejects_unknown_and_stale_handles() {
+        let store = populated_media_store();
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            Arc::new(NotificationStore::new()),
+            false,
+            Some(store),
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        // A handle that was never issued cannot control anything.
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::SendMediaControl {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 131,
+                    player_handle: "player:never-issued".to_owned(),
+                    verb: MediaControlVerb::Play,
+                },
+            )
+            .await,
+            Response::MediaControlRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 131,
+                player_handle: "player:never-issued".to_owned(),
+                code: MediaControlError::UnknownPlayer,
+            }
+        );
+
+        // A handle present in the snapshot but with no live target is stale.
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::SendMediaControl {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 132,
+                    player_handle: "player:opaque-1".to_owned(),
+                    verb: MediaControlVerb::Play,
+                },
+            )
+            .await,
+            Response::MediaControlRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 132,
+                player_handle: "player:opaque-1".to_owned(),
+                code: MediaControlError::StaleHandle,
+            }
+        );
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn media_control_rejects_a_non_controllable_player() {
+        let store = Arc::new(MediaStore::new(None));
+        let mut player = test_media_player("player:opaque-1", PlaybackStatus::Playing);
+        player.can_control = false;
+        store.apply(vec![player]).unwrap();
+
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            Arc::new(NotificationStore::new()),
+            false,
+            Some(store),
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+
+        assert_eq!(
+            send_request(
+                &mut reader,
+                &Request::SendMediaControl {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: 133,
+                    player_handle: "player:opaque-1".to_owned(),
+                    verb: MediaControlVerb::Play,
+                },
+            )
+            .await,
+            Response::MediaControlRejected {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 133,
+                player_handle: "player:opaque-1".to_owned(),
+                code: MediaControlError::ControlUnavailable,
+            }
+        );
 
         drop(reader);
         server_task.await.unwrap().unwrap();

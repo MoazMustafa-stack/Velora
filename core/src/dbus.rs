@@ -16,7 +16,7 @@ use std::{env, ffi::OsStr, time::Duration};
 use thiserror::Error;
 use tokio::time::timeout;
 use velora_protocol::MAX_MEDIA_PLAYERS;
-use zbus::{Connection, Proxy, names::OwnedBusName};
+use zbus::{Connection, Proxy, names::OwnedBusName, names::OwnedUniqueName};
 
 /// Session-bus address override used by tests, mirroring the `VELORA_SOCKET`
 /// rule. Production falls back to `DBUS_SESSION_BUS_ADDRESS` via zbus.
@@ -229,6 +229,29 @@ async fn list_names(connection: &Connection) -> Result<Vec<OwnedBusName>, DbusEr
 pub(crate) async fn list_players(connection: &Connection) -> Result<Vec<String>, DbusError> {
     let names = list_names(connection).await?;
     Ok(mpris_player_names(names.iter().map(|name| name.as_str())))
+}
+
+/// Resolve a player well-known name to its current unique owner. The media
+/// store records this at refresh time and re-checks it at control-dispatch time
+/// (P5.06), so a vanished player (no owner) or a replaced player (different
+/// owner) always fails closed instead of dispatching to the wrong connection.
+pub(crate) async fn player_owner(
+    connection: &Connection,
+    player_name: &str,
+) -> Result<OwnedUniqueName, DbusError> {
+    let proxy = Proxy::new(
+        connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )
+    .await
+    .map_err(map_call_error)?;
+
+    proxy
+        .call("GetNameOwner", &(player_name,))
+        .await
+        .map_err(map_call_error)
 }
 
 /// Keep only `org.mpris.MediaPlayer2.*` well-known names, bounded and trimmed.

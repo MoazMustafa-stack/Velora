@@ -28,6 +28,7 @@
 //! snapshot.
 
 use std::{
+    collections::HashMap,
     env,
     ffi::OsStr,
     sync::{Arc, Mutex},
@@ -38,9 +39,10 @@ use thiserror::Error;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 use velora_protocol::{
-    MAX_MEDIA_PAYLOAD_BYTES, MAX_MEDIA_PLAYERS, MediaPlayer, MediaSnapshot, PlaybackStatus,
+    MAX_MEDIA_PAYLOAD_BYTES, MAX_MEDIA_PLAYERS, MediaControlError, MediaControlVerb, MediaPlayer,
+    MediaSnapshot, PlaybackStatus,
 };
-use zbus::Connection;
+use zbus::{Connection, names::OwnedUniqueName};
 
 use crate::{dbus, mpris, mpris_events};
 
@@ -52,6 +54,10 @@ const SESSION_BUS_ADDRESS_ENV: &str = "VELORA_SESSION_BUS_ADDRESS";
 /// hung bus or a wedged player can never block shutdown or the on-demand IPC
 /// path indefinitely.
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+/// Maximum wall-clock time allowed for one control dispatch (connect, owner
+/// re-validation, and the method call). A hung bus or a wedged player can
+/// never block the IPC handler indefinitely.
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 /// Base and ceiling for the capped refresh-retry backoff, mirroring the
 /// session store so a flapping bus never produces a busy loop.
 const REFRESH_BACKOFF_BASE: Duration = Duration::from_millis(250);
@@ -101,10 +107,22 @@ pub(crate) struct MediaStore {
     updates: watch::Sender<Option<Arc<MediaSnapshot>>>,
 }
 
+/// The Core-private live target of an opaque player handle. Rebuilt atomically
+/// with the snapshot and never serialized to any frontend; it exists only so a
+/// control dispatch can re-validate the handle against the current bus owner.
+#[derive(Debug, Clone)]
+struct PlayerAddress {
+    bus_name: String,
+    owner: OwnedUniqueName,
+}
+
 #[derive(Default)]
 struct MediaState {
     sequence: u64,
     snapshot: Option<Arc<MediaSnapshot>>,
+    /// Opaque handle -> live bus target. Bounded to the players in the current
+    /// snapshot (at most [`MAX_MEDIA_PLAYERS`]); never crosses IPC.
+    targets: HashMap<String, PlayerAddress>,
     health: StoreHealth,
 }
 
@@ -203,19 +221,47 @@ impl MediaStore {
         names.truncate(MAX_MEDIA_PLAYERS);
 
         let mut players = Vec::with_capacity(names.len());
+        let mut targets = HashMap::with_capacity(names.len());
         for name in &names {
+            // Resolve the owner before reading so a player that vanishes mid-
+            // refresh is dropped cleanly (fail closed) and every published
+            // player carries a re-validatable control target.
+            let Ok(owner) = dbus::player_owner(connection, name).await else {
+                debug!(player = %name, "skipping MPRIS player without an owner");
+                continue;
+            };
             match mpris::read_player(connection, name).await {
-                Ok(player) => players.push(player),
+                Ok(player) => {
+                    targets.insert(
+                        player.handle.clone(),
+                        PlayerAddress {
+                            bus_name: name.clone(),
+                            owner,
+                        },
+                    );
+                    players.push(player);
+                }
                 Err(error) => debug!(%error, player = %name, "skipping unreadable MPRIS player"),
             }
         }
-        self.apply(players)
+        self.apply_with_targets(players, targets)
     }
 
     /// Replace the authoritative snapshot from a freshly-read player list.
     /// Returns true only when the published content changed. Pure and
     /// side-effect free except for publication, so tests exercise it directly.
-    pub(crate) fn apply(&self, mut players: Vec<MediaPlayer>) -> Result<bool, MediaStoreError> {
+    /// Production always supplies live targets; tests use this snapshot-only
+    /// path (no control targets).
+    #[cfg(test)]
+    pub(crate) fn apply(&self, players: Vec<MediaPlayer>) -> Result<bool, MediaStoreError> {
+        self.apply_with_targets(players, HashMap::new())
+    }
+
+    fn apply_with_targets(
+        &self,
+        mut players: Vec<MediaPlayer>,
+        targets: HashMap<String, PlayerAddress>,
+    ) -> Result<bool, MediaStoreError> {
         // A stable sort key makes changed-only detection order-insensitive.
         players.sort_by(|left, right| left.handle.cmp(&right.handle));
 
@@ -253,6 +299,10 @@ impl MediaStore {
             .snapshot
             .as_ref()
             .is_none_or(|current| !content_eq(current, &fresh));
+        // The live targets are rebuilt on every successful apply — even when the
+        // wire content is unchanged — because a player may have been replaced by
+        // an identical-looking connection whose owner differs.
+        state.targets = targets;
         if changed {
             state.sequence = next_sequence;
             let fresh = Arc::new(fresh);
@@ -267,6 +317,65 @@ impl MediaStore {
         state.health.last_success = Some(Instant::now());
         state.health.last_error = None;
         Ok(changed)
+    }
+
+    /// Dispatch one allowlisted control verb to a snapshot-issued player handle.
+    /// The handle is resolved against the authoritative snapshot, its live bus
+    /// target is re-validated (the name must still be owned by the connection
+    /// that issued the handle), and the verb is mapped to a fixed MPRIS method.
+    /// Every uncertainty — an unknown handle, a vanished or replaced player, a
+    /// missing capability, a failed method call — degrades to a typed error and
+    /// never guesses at a destination.
+    pub(crate) async fn control(
+        &self,
+        handle: &str,
+        verb: MediaControlVerb,
+    ) -> Result<(), MediaControlError> {
+        // Resolve and gate under the state lock, cloning the live target before
+        // any D-Bus traffic. The lock is not held across `.await`.
+        let target = {
+            let state = self.state.lock().unwrap();
+            let Some(snapshot) = state.snapshot.as_ref() else {
+                return Err(MediaControlError::ControlUnavailable);
+            };
+            let Some(player) = snapshot.players.iter().find(|p| p.handle == handle) else {
+                return Err(MediaControlError::UnknownPlayer);
+            };
+            if !player.can_control || !verb_supported(player, verb) {
+                return Err(MediaControlError::ControlUnavailable);
+            }
+            state
+                .targets
+                .get(handle)
+                .cloned()
+                .ok_or(MediaControlError::StaleHandle)?
+        };
+
+        let dispatch = tokio::time::timeout(CONTROL_TIMEOUT, async {
+            let connection = connect(self.address.as_deref())
+                .await
+                .map_err(|_| MediaControlError::ControlUnavailable)?;
+
+            // Re-validate the handle-to-bus-name mapping against the live bus:
+            // a vanished player has no owner and a replaced player has a
+            // different owner than the one the snapshot was built from.
+            let owner = dbus::player_owner(&connection, &target.bus_name)
+                .await
+                .map_err(|_| MediaControlError::StaleHandle)?;
+            if owner != target.owner {
+                return Err(MediaControlError::StaleHandle);
+            }
+
+            mpris::control_player(&connection, &target.bus_name, verb)
+                .await
+                .map_err(|_| MediaControlError::ControlFailed)
+        })
+        .await;
+
+        match dispatch {
+            Ok(result) => result,
+            Err(_) => Err(MediaControlError::ControlUnavailable),
+        }
     }
 
     /// Record a failed refresh while retaining the last-good snapshot.
@@ -361,6 +470,21 @@ fn select_focused(players: &[MediaPlayer], previous_focused: Option<&str>) -> Op
     }
     players.first().map(|player| player.handle.clone())
 }
+
+/// Whether a player advertises support for a specific verb, on top of the
+/// master `CanControl` gate checked by the caller. The MPRIS spec has no
+/// `CanStop` flag, so `Stop` is gated by `CanControl` alone.
+fn verb_supported(player: &MediaPlayer, verb: MediaControlVerb) -> bool {
+    match verb {
+        MediaControlVerb::Play => player.can_play,
+        MediaControlVerb::Pause => player.can_pause,
+        MediaControlVerb::PlayPause => player.can_play && player.can_pause,
+        MediaControlVerb::Stop => true,
+        MediaControlVerb::Next => player.can_go_next,
+        MediaControlVerb::Previous => player.can_go_previous,
+    }
+}
+
 /// Two snapshots are equal only when every field that the wire model exposes is
 /// identical. This intentionally includes [`MediaPlayer::position_micros`]:
 /// playback position is authoritative state in the protocol snapshot, so a
@@ -467,7 +591,7 @@ mod tests {
         collections::HashMap,
         io::{BufRead, BufReader},
         process::{Child, Command, Stdio},
-        sync::atomic::{AtomicU64, Ordering},
+        sync::atomic::{AtomicBool, AtomicU64, Ordering},
     };
     use tokio::sync::mpsc;
     use velora_protocol::MAX_STRING_BYTES;
@@ -756,6 +880,135 @@ mod tests {
         assert_eq!(store.current().unwrap().players[0].position_micros, 2_000);
     }
 
+    #[test]
+    fn capability_gate_maps_each_verb_to_its_flags() {
+        let controllable = player("player:1", PlaybackStatus::Playing);
+        assert!(verb_supported(&controllable, MediaControlVerb::Play));
+        assert!(verb_supported(&controllable, MediaControlVerb::Pause));
+        assert!(verb_supported(&controllable, MediaControlVerb::PlayPause));
+        assert!(verb_supported(&controllable, MediaControlVerb::Stop));
+        assert!(verb_supported(&controllable, MediaControlVerb::Next));
+        assert!(verb_supported(&controllable, MediaControlVerb::Previous));
+
+        let mut limited = player("player:1", PlaybackStatus::Playing);
+        limited.can_play = false;
+        limited.can_go_next = false;
+        assert!(!verb_supported(&limited, MediaControlVerb::Play));
+        assert!(!verb_supported(&limited, MediaControlVerb::PlayPause));
+        assert!(!verb_supported(&limited, MediaControlVerb::Next));
+        // Pause and Previous are still advertised, and Stop is gated only by
+        // `CanControl`.
+        assert!(verb_supported(&limited, MediaControlVerb::Pause));
+        assert!(verb_supported(&limited, MediaControlVerb::Previous));
+        assert!(verb_supported(&limited, MediaControlVerb::Stop));
+    }
+
+    #[tokio::test]
+    async fn control_without_a_snapshot_is_unavailable() {
+        let store = MediaStore::new(None);
+        assert_eq!(
+            store
+                .control("player:1", MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::ControlUnavailable
+        );
+    }
+
+    #[tokio::test]
+    async fn control_rejects_unknown_handles_without_touching_the_bus() {
+        let store = MediaStore::new(None);
+        store
+            .apply(vec![player("player:1", PlaybackStatus::Playing)])
+            .unwrap();
+
+        assert_eq!(
+            store
+                .control("player:missing", MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::UnknownPlayer
+        );
+    }
+
+    #[tokio::test]
+    async fn control_rejects_a_raw_bus_name_or_malformed_handle() {
+        let store = MediaStore::new(None);
+        store
+            .apply(vec![player("player:1", PlaybackStatus::Playing)])
+            .unwrap();
+
+        // A raw well-known name can never act as a handle: it fails closed as
+        // unknown rather than dispatching to the named connection.
+        assert_eq!(
+            store
+                .control("org.mpris.MediaPlayer2.spotify", MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::UnknownPlayer
+        );
+
+        // An oversized/malformed handle is rejected the same way.
+        let garbage = "x".repeat(MAX_STRING_BYTES + 1);
+        assert_eq!(
+            store
+                .control(&garbage, MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::UnknownPlayer
+        );
+    }
+
+    #[tokio::test]
+    async fn control_rejects_a_known_handle_without_a_live_target() {
+        // `apply` publishes the snapshot-only path (no control targets), so a
+        // handle present in the snapshot but with no live bus target is stale.
+        let store = MediaStore::new(None);
+        store
+            .apply(vec![player("player:1", PlaybackStatus::Playing)])
+            .unwrap();
+
+        assert_eq!(
+            store
+                .control("player:1", MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::StaleHandle
+        );
+    }
+
+    #[tokio::test]
+    async fn control_requires_a_controllable_player() {
+        let store = MediaStore::new(None);
+        let mut track = player("player:1", PlaybackStatus::Playing);
+        track.can_control = false;
+        store.apply(vec![track]).unwrap();
+
+        assert_eq!(
+            store
+                .control("player:1", MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::ControlUnavailable
+        );
+    }
+
+    #[tokio::test]
+    async fn control_requires_the_specific_transport_capability() {
+        let store = MediaStore::new(None);
+        let mut track = player("player:1", PlaybackStatus::Playing);
+        track.can_go_next = false;
+        store.apply(vec![track]).unwrap();
+
+        assert_eq!(
+            store
+                .control("player:1", MediaControlVerb::Next)
+                .await
+                .unwrap_err(),
+            MediaControlError::ControlUnavailable
+        );
+    }
+
     fn full_width_player(handle: &str) -> MediaPlayer {
         MediaPlayer {
             handle: handle.to_owned(),
@@ -1007,5 +1260,227 @@ mod tests {
         assert_eq!(snapshot.sequence, 2);
         assert_eq!(snapshot.players.len(), 1);
         assert_eq!(snapshot.players[0].title.as_deref(), Some("title-1"));
+    }
+
+    /// A controllable fake player: serves the read properties the store needs
+    /// (identity plus the `Player` transport flags) and records which transport
+    /// method was invoked, optionally failing the next call.
+    struct ControlProps {
+        calls: Arc<Mutex<Vec<String>>>,
+        fail_next: Arc<AtomicBool>,
+    }
+
+    impl ControlProps {
+        fn record(&self, method: &str) -> zbus::fdo::Result<()> {
+            self.calls.lock().unwrap().push(method.to_owned());
+            if self.fail_next.swap(false, Ordering::SeqCst) {
+                Err(zbus::fdo::Error::Failed(
+                    "player refused control".to_owned(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[zbus::interface(name = "org.mpris.MediaPlayer2.Player")]
+    impl ControlProps {
+        #[zbus(property)]
+        fn playback_status(&self) -> String {
+            "Paused".to_owned()
+        }
+
+        #[zbus(property)]
+        fn metadata(&self) -> HashMap<String, OwnedValue> {
+            HashMap::new()
+        }
+
+        #[zbus(property)]
+        fn position(&self) -> i64 {
+            0
+        }
+
+        #[zbus(property)]
+        fn can_play(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn can_pause(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn can_go_next(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn can_go_previous(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn can_seek(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn can_control(&self) -> bool {
+            true
+        }
+
+        #[zbus(name = "Play")]
+        async fn play(&self) -> zbus::fdo::Result<()> {
+            self.record("Play")
+        }
+
+        #[zbus(name = "Pause")]
+        async fn pause(&self) -> zbus::fdo::Result<()> {
+            self.record("Pause")
+        }
+
+        #[zbus(name = "PlayPause")]
+        async fn play_pause(&self) -> zbus::fdo::Result<()> {
+            self.record("PlayPause")
+        }
+
+        #[zbus(name = "Stop")]
+        async fn stop(&self) -> zbus::fdo::Result<()> {
+            self.record("Stop")
+        }
+
+        #[zbus(name = "Next")]
+        async fn next(&self) -> zbus::fdo::Result<()> {
+            self.record("Next")
+        }
+
+        #[zbus(name = "Previous")]
+        async fn previous(&self) -> zbus::fdo::Result<()> {
+            self.record("Previous")
+        }
+    }
+
+    struct ControlFixture {
+        bus: PrivateBus,
+        player: Connection,
+        calls: Arc<Mutex<Vec<String>>>,
+        fail_next: Arc<AtomicBool>,
+        store: Arc<MediaStore>,
+        handle: String,
+    }
+
+    /// Spin up a private bus with one controllable player and warm the store so
+    /// the handle maps to a live, re-validatable target.
+    async fn spawn_controllable_player() -> Option<ControlFixture> {
+        let bus = PrivateBus::spawn()?;
+        let player = bus.connect().await;
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let fail_next = Arc::new(AtomicBool::new(false));
+        let control_props = ControlProps {
+            calls: Arc::clone(&calls),
+            fail_next: Arc::clone(&fail_next),
+        };
+        let server = player.object_server();
+        server
+            .at("/org/mpris/MediaPlayer2", MediaPlayer2Props)
+            .await
+            .unwrap();
+        server
+            .at("/org/mpris/MediaPlayer2", control_props)
+            .await
+            .unwrap();
+        player.request_name(TEST_PLAYER).await.unwrap();
+
+        let store = Arc::new(MediaStore::new(Some(std::ffi::OsString::from(
+            bus.address.clone(),
+        ))));
+        store.refresh().await.unwrap();
+        let handle = store.current().unwrap().players[0].handle.clone();
+
+        Some(ControlFixture {
+            bus,
+            player,
+            calls,
+            fail_next,
+            store,
+            handle,
+        })
+    }
+
+    #[tokio::test]
+    async fn control_dispatches_only_fixed_player_methods() {
+        let Some(fixture) = spawn_controllable_player().await else {
+            eprintln!("dbus-daemon unavailable; skipping");
+            return;
+        };
+        for verb in [
+            MediaControlVerb::Play,
+            MediaControlVerb::Pause,
+            MediaControlVerb::PlayPause,
+            MediaControlVerb::Stop,
+            MediaControlVerb::Next,
+            MediaControlVerb::Previous,
+        ] {
+            fixture.store.control(&fixture.handle, verb).await.unwrap();
+        }
+        let calls = fixture.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec!["Play", "Pause", "PlayPause", "Stop", "Next", "Previous",]
+        );
+    }
+
+    #[tokio::test]
+    async fn control_reports_a_typed_failure_when_the_player_refuses() {
+        let Some(fixture) = spawn_controllable_player().await else {
+            eprintln!("dbus-daemon unavailable; skipping");
+            return;
+        };
+        fixture.fail_next.store(true, Ordering::SeqCst);
+        assert_eq!(
+            fixture
+                .store
+                .control(&fixture.handle, MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::ControlFailed
+        );
+    }
+
+    #[tokio::test]
+    async fn control_fails_closed_when_the_player_vanishes() {
+        let Some(fixture) = spawn_controllable_player().await else {
+            eprintln!("dbus-daemon unavailable; skipping");
+            return;
+        };
+        fixture.player.release_name(TEST_PLAYER).await.unwrap();
+        assert_eq!(
+            fixture
+                .store
+                .control(&fixture.handle, MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::StaleHandle
+        );
+    }
+
+    #[tokio::test]
+    async fn control_fails_closed_when_the_player_is_replaced() {
+        let Some(fixture) = spawn_controllable_player().await else {
+            eprintln!("dbus-daemon unavailable; skipping");
+            return;
+        };
+        fixture.player.release_name(TEST_PLAYER).await.unwrap();
+        let replacement = fixture.bus.connect().await;
+        replacement.request_name(TEST_PLAYER).await.unwrap();
+        assert_eq!(
+            fixture
+                .store
+                .control(&fixture.handle, MediaControlVerb::Play)
+                .await
+                .unwrap_err(),
+            MediaControlError::StaleHandle
+        );
     }
 }

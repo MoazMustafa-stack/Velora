@@ -19,7 +19,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 use thiserror::Error;
-use velora_protocol::{MAX_STRING_BYTES, MediaPlayer, PlaybackStatus};
+use velora_protocol::{MAX_STRING_BYTES, MediaControlVerb, MediaPlayer, PlaybackStatus};
 use zbus::{
     Connection, Proxy,
     zvariant::{OwnedValue, Value},
@@ -73,6 +73,48 @@ pub(crate) async fn read_player(
     })?;
 
     normalize_player(player_name, &media2, &player)
+}
+
+/// The fixed `org.mpris.MediaPlayer2.Player` method each allowlisted control
+/// verb maps to. This is the complete write surface: every verb resolves to
+/// exactly one no-argument method, so a raw method name or an arbitrary
+/// argument can never reach the bus from IPC.
+pub(crate) fn player_method(verb: MediaControlVerb) -> &'static str {
+    match verb {
+        MediaControlVerb::Play => "Play",
+        MediaControlVerb::Pause => "Pause",
+        MediaControlVerb::PlayPause => "PlayPause",
+        MediaControlVerb::Stop => "Stop",
+        MediaControlVerb::Next => "Next",
+        MediaControlVerb::Previous => "Previous",
+    }
+}
+
+/// Dispatch one allowlisted control verb to a player. The verb is mapped to a
+/// fixed, no-argument method on `org.mpris.MediaPlayer2.Player`; neither the
+/// method name nor any argument crosses IPC. This is the only state-changing
+/// call the adapter ever makes.
+pub(crate) async fn control_player(
+    connection: &Connection,
+    player_name: &str,
+    verb: MediaControlVerb,
+) -> Result<(), MprisError> {
+    validate_player_name(player_name)?;
+
+    let proxy = Proxy::new(connection, player_name, MPRIS_OBJECT_PATH, PLAYER_INTERFACE)
+        .await
+        .map_err(|source| MprisError::Call {
+            player: player_name.to_owned(),
+            source: Box::new(source),
+        })?;
+
+    proxy
+        .call::<_, _, ()>(player_method(verb), &())
+        .await
+        .map_err(|source| MprisError::Call {
+            player: player_name.to_owned(),
+            source: Box::new(source),
+        })
 }
 
 /// Reject an empty or oversized player name before it is hashed or used as a
@@ -505,5 +547,18 @@ mod tests {
         assert!(validate_player_name("").is_err());
         let too_long = "x".repeat(MAX_PLAYER_NAME_CHARS + 1);
         assert!(validate_player_name(&too_long).is_err());
+    }
+
+    #[test]
+    fn control_verbs_map_to_exactly_the_fixed_player_methods() {
+        // The allowlist is exhaustive and maps each verb to one fixed,
+        // no-argument MPRIS Player method. There is no verb outside this set
+        // and no way to reach any other method.
+        assert_eq!(player_method(MediaControlVerb::Play), "Play");
+        assert_eq!(player_method(MediaControlVerb::Pause), "Pause");
+        assert_eq!(player_method(MediaControlVerb::PlayPause), "PlayPause");
+        assert_eq!(player_method(MediaControlVerb::Stop), "Stop");
+        assert_eq!(player_method(MediaControlVerb::Next), "Next");
+        assert_eq!(player_method(MediaControlVerb::Previous), "Previous");
     }
 }
