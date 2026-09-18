@@ -5,7 +5,7 @@
 > visual direction, and Linux integrations are expected to change.
 
 [![Status: work in progress](https://img.shields.io/badge/status-work_in_progress-f59e0b)](#project-status)
-[![Phase: 4 complete](https://img.shields.io/badge/phase-4_complete-22c55e)](#current-status)
+[![Phase: 5 local gate passed](https://img.shields.io/badge/phase-5_local_gate_passed-22c55e)](#current-status)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-22c55e)](LICENSE)
 [![CI](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml/badge.svg)](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml)
 [![Buy me a coffee](https://img.shields.io/badge/Support-Ko--fi-ff5e5b)](https://ko-fi.com/moazmustafa)
@@ -30,8 +30,9 @@ normal desktop remains available if Velora exits.
 
 ## Current status
 
-Phase 3 is complete. Phase 4 (system telemetry) is complete and merged to
-`main` via PR #7.
+Phases 1–4 are complete and merged to `main`. Phase 5 (D-Bus media and
+notifications) is implemented on `dbus-media-core`; its cumulative local
+release gate passes, and the work is awaiting commit/review/merge.
 
 Phase 1.01–1.10 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
 hub, eight-direction movement with four-direction facing, sprinting, physical
@@ -61,6 +62,15 @@ HUD in the frontend. All sampling honors a user-facing privacy toggle
 (`VELORA_TELEMETRY_ENABLED`), and the Phase 4 release gate enforces strict
 CPU/RSS budgets so idle telemetry stays near zero cost.
 
+Phase 5 upgrades the contract to protocol v5 and adds capability-gated MPRIS
+media plus a memory-only notification feed. Core discovers players, publishes
+changed-only snapshots, and accepts only six fixed media verbs against opaque
+snapshot-issued handles. Notifications are disabled by default because
+monitoring is privacy-sensitive; when explicitly enabled, Core observes only
+the Notifications interface and retains at most 32 entries within a 4 KiB
+serialized feed. Media and notifications are pushed live after the frontend's
+initial request, without polling or blocking rendering.
+
 ## Run
 
 For normal development, start the complete system with one command:
@@ -81,6 +91,16 @@ You can still start the core and frontend in separate terminals:
 
 The default window is 960 × 540, rendered from a 320 × 180 internal canvas with
 integer nearest-neighbour scaling. Install Godot 4.7 and Rust first if needed.
+
+Media observation is enabled by default and can be disabled with
+`VELORA_MEDIA_ENABLED=false`. Notification observation is opt-in:
+
+```bash
+VELORA_NOTIFICATIONS_ENABLED=true ./scripts/velora.sh dev
+```
+
+Automated runners disable both integrations or provide a private session bus;
+they never contact the user's live D-Bus session.
 
 The unified development runner exposes the common workflows:
 
