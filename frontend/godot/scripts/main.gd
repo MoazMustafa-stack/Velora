@@ -7,10 +7,12 @@ const SessionBinding = preload("res://scripts/session_binding.gd")
 @onready var hud: CanvasLayer = $HUD
 @onready var workspace_map: CanvasLayer = $WorkspaceMap
 @onready var notification_feed: CanvasLayer = $NotificationFeed
+@onready var media_console: CanvasLayer = $MediaConsole
 
 var menu_open := false
 var map_open := false
 var feed_open := false
+var media_open := false
 var _stations: Array[Node] = []
 
 func _ready() -> void:
@@ -33,6 +35,15 @@ func _ready() -> void:
 	notification_feed.set_availability(backend.notifications_availability)
 	if not backend.notification_feed.is_empty():
 		notification_feed.update_feed(backend.notification_feed)
+	backend.media_snapshot_changed.connect(media_console.update_media)
+	backend.media_availability_changed.connect(media_console.set_availability)
+	backend.media_control_accepted.connect(media_console.apply_control_accepted)
+	backend.media_control_rejected.connect(media_console.apply_control_rejected)
+	media_console.control_requested.connect(backend.send_media_control)
+	media_console.console_closed.connect(_on_media_console_closed)
+	media_console.set_availability(backend.media_availability)
+	if not backend.media_snapshot.is_empty():
+		media_console.update_media(backend.media_snapshot)
 	workspace_map.map_closed.connect(_on_map_closed)
 	workspace_map.switch_requested.connect(backend.request_switch_workspace)
 	if backend.session_availability != "unknown":
@@ -42,7 +53,7 @@ func _ready() -> void:
 	hud.set_status("VELORA // POCKET TERMINAL")
 
 func _unhandled_input(event: InputEvent) -> void:
-	if menu_open or map_open or feed_open or not event is InputEventKey:
+	if menu_open or map_open or feed_open or media_open or not event is InputEventKey:
 		return
 	if not event.pressed or event.echo:
 		return
@@ -52,6 +63,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.keycode == KEY_N:
 		get_viewport().set_input_as_handled()
 		_toggle_notification_feed()
+	elif event.keycode == KEY_P:
+		get_viewport().set_input_as_handled()
+		_toggle_media_console()
 
 func _toggle_workspace_map() -> void:
 	map_open = true
@@ -72,6 +86,18 @@ func _toggle_notification_feed() -> void:
 
 func _on_feed_closed() -> void:
 	feed_open = false
+	player.set_input_enabled(true)
+
+func _toggle_media_console() -> void:
+	media_open = true
+	player.set_input_enabled(false)
+	# Scene-driven refresh: the client fetches once per connection, so the
+	# console asks for a fresh single-flight snapshot whenever it is opened.
+	backend.request_media_snapshot()
+	media_console.open()
+
+func _on_media_console_closed() -> void:
+	media_open = false
 	player.set_input_enabled(true)
 
 func _on_session_snapshot_changed(snapshot: Dictionary) -> void:

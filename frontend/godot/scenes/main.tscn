@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/backend_client.gd" id="2_backend"]
@@ -8,6 +8,7 @@
 [ext_resource type="Script" path="res://ui/hud.gd" id="6_hud"]
 [ext_resource type="Script" path="res://ui/workspace_map.gd" id="7_workspace_map"]
 [ext_resource type="Script" path="res://ui/notification_feed.gd" id="8_notification_feed"]
+[ext_resource type="Script" path="res://ui/media_console.gd" id="9_media_console"]
 
 [sub_resource type="RectangleShape2D" id="Shape_player"]
 size = Vector2(10, 8)
@@ -288,3 +289,8 @@ script = ExtResource("7_workspace_map")
 layer = 3
 visible = false
 script = ExtResource("8_notification_feed")
+
+[node name="MediaConsole" type="CanvasLayer" parent="."]
+layer = 4
+visible = false
+script = ExtResource("9_media_console")

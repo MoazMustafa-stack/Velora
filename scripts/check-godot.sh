@@ -45,3 +45,5 @@ run_godot backend-client --script res://tests/backend_client_validation.gd
 run_godot workspace-map --script res://tests/workspace_map_validation.gd
 run_godot session-binding --script res://tests/session_binding_validation.gd
 run_godot notification-feed --script res://tests/notification_validation.gd
+run_godot media-client --script res://tests/media_client_validation.gd
+run_godot media-console --script res://tests/media_validation.gd
