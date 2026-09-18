@@ -81,7 +81,7 @@ pub(crate) struct DbusCapabilities {
 }
 
 impl DbusCapabilities {
-    fn unavailable() -> Self {
+    pub(crate) fn unavailable() -> Self {
         Self {
             bus: BusAvailability::Unavailable,
             media: MediaAvailability::Unavailable,

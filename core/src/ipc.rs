@@ -316,10 +316,14 @@ where
     }
 
     let mut snapshot_updates = session.as_ref().map(|store| store.subscribe());
+    let mut media_updates = media.as_ref().map(|store| store.subscribe());
+    let mut notification_updates = notifications_enabled.then(|| notifications.subscribe());
     // Do not interleave a pushed snapshot into a client that has not yet
     // requested its initial state. Once it has, every later changed snapshot
     // is delivered with request ID zero.
     let mut session_updates_enabled = false;
+    let mut media_updates_enabled = false;
+    let mut notification_updates_enabled = false;
     loop {
         let line = tokio::select! {
             frame = read_frame(&mut reader) => {
@@ -348,6 +352,54 @@ where
                         // A zero request ID identifies a Core-published update.
                         request_id: 0,
                         snapshot: (*snapshot).clone(),
+                    },
+                )
+                .await?;
+                continue;
+            }
+            changed = wait_for_media_update(&mut media_updates) => {
+                if changed.is_err() {
+                    break;
+                }
+                let snapshot = media_updates
+                    .as_mut()
+                    .and_then(|receiver| receiver.borrow_and_update().clone());
+                if !media_updates_enabled {
+                    continue;
+                }
+                let Some(snapshot) = snapshot else {
+                    continue;
+                };
+                write_response(
+                    &mut writer,
+                    &Response::MediaSnapshot {
+                        protocol_version: PROTOCOL_VERSION,
+                        request_id: 0,
+                        snapshot: (*snapshot).clone(),
+                    },
+                )
+                .await?;
+                continue;
+            }
+            changed = wait_for_notification_update(&mut notification_updates) => {
+                if changed.is_err() {
+                    break;
+                }
+                let feed = notification_updates
+                    .as_mut()
+                    .and_then(|receiver| receiver.borrow_and_update().clone());
+                if !notification_updates_enabled {
+                    continue;
+                }
+                let Some(feed) = feed else {
+                    continue;
+                };
+                write_response(
+                    &mut writer,
+                    &Response::Notifications {
+                        protocol_version: PROTOCOL_VERSION,
+                        request_id: 0,
+                        feed: (*feed).clone(),
                     },
                 )
                 .await?;
@@ -497,6 +549,24 @@ where
             }
             session_updates_enabled = true;
         }
+        if matches!(
+            response,
+            Response::MediaSnapshot { .. } | Response::MediaSnapshotRejected { .. }
+        ) {
+            if let Some(receiver) = &mut media_updates {
+                receiver.borrow_and_update();
+            }
+            media_updates_enabled = true;
+        }
+        if matches!(
+            response,
+            Response::Notifications { .. } | Response::NotificationsRejected { .. }
+        ) {
+            if let Some(receiver) = &mut notification_updates {
+                receiver.borrow_and_update();
+            }
+            notification_updates_enabled = true;
+        }
         write_response(&mut writer, &response).await?;
         if should_close {
             break;
@@ -508,6 +578,24 @@ where
 
 async fn wait_for_snapshot_update(
     receiver: &mut Option<watch::Receiver<Option<Arc<velora_protocol::WorkspaceSnapshot>>>>,
+) -> Result<(), watch::error::RecvError> {
+    match receiver {
+        Some(receiver) => receiver.changed().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn wait_for_media_update(
+    receiver: &mut Option<watch::Receiver<Option<Arc<velora_protocol::MediaSnapshot>>>>,
+) -> Result<(), watch::error::RecvError> {
+    match receiver {
+        Some(receiver) => receiver.changed().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn wait_for_notification_update(
+    receiver: &mut Option<watch::Receiver<Option<Arc<velora_protocol::NotificationFeed>>>>,
 ) -> Result<(), watch::error::RecvError> {
     match receiver {
         Some(receiver) => receiver.changed().await,
@@ -1022,6 +1110,10 @@ mod tests {
             .write_all(format!("{request}\n").as_bytes())
             .await
             .unwrap();
+        read_response(reader).await
+    }
+
+    async fn read_response(reader: &mut BufReader<UnixStream>) -> Response {
         let mut line = String::new();
         reader.read_line(&mut line).await.unwrap();
         serde_json::from_str(line.trim()).unwrap()
@@ -1489,6 +1581,7 @@ mod tests {
             let config = CoreConfig {
                 socket_path: socket_path.clone(),
                 telemetry: crate::config::TelemetryPolicy::default(),
+                media: crate::config::MediaPolicy::default(),
                 notifications: crate::config::NotificationsPolicy::default(),
             };
             let launcher = Arc::new(MockLauncher::new(MockLaunchOutcome::Accepted(
@@ -1955,6 +2048,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pushes_changed_notification_feeds_after_the_initial_request() {
+        let store = populated_notification_store();
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            Arc::clone(&store),
+            true,
+            None,
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+        let initial = send_request(
+            &mut reader,
+            &Request::GetNotifications {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 115,
+            },
+        )
+        .await;
+        assert!(matches!(
+            initial,
+            Response::Notifications {
+                request_id: 115,
+                ..
+            }
+        ));
+
+        store.observe(
+            NotifyObservation {
+                app_name: "Mail".to_owned(),
+                summary: "New message".to_owned(),
+                body: "Bounded preview".to_owned(),
+                urgency: NotificationUrgency::Low,
+            },
+            2_000,
+        );
+        let pushed = timeout(Duration::from_secs(1), read_response(&mut reader))
+            .await
+            .unwrap();
+        let Response::Notifications {
+            request_id, feed, ..
+        } = pushed
+        else {
+            panic!("expected a pushed notification feed");
+        };
+        assert_eq!(request_id, 0);
+        assert_eq!(feed.sequence, 2);
+        assert_eq!(feed.notifications.last().unwrap().app_name, "Mail");
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn available_monitor_without_feed_reports_not_ready() {
         let store = Arc::new(NotificationStore::new());
         store.set_availability(NotificationAvailability::Available);
@@ -2087,6 +2249,74 @@ mod tests {
             Some("player:opaque-1")
         );
         snapshot.validate().unwrap();
+
+        drop(reader);
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn pushes_changed_media_snapshots_after_the_initial_request() {
+        let store = populated_media_store();
+        let (server, client) = UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection_with_services(
+            server,
+            Arc::from([]),
+            Arc::new(LaunchService::empty()),
+            HyprlandCapabilities::unavailable(),
+            dead_session_store(),
+            Arc::new(TelemetryStore::default()),
+            true,
+            Arc::new(NotificationStore::new()),
+            false,
+            Some(Arc::clone(&store)),
+        ));
+        let mut reader = BufReader::new(client);
+        let hello = send_request(
+            &mut reader,
+            &Request::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name: "test-client".to_owned(),
+                client_version: "0.3.0".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(hello, Response::Welcome { .. }));
+        let initial = send_request(
+            &mut reader,
+            &Request::GetMediaSnapshot {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: 124,
+            },
+        )
+        .await;
+        assert!(matches!(
+            initial,
+            Response::MediaSnapshot {
+                request_id: 124,
+                ..
+            }
+        ));
+
+        store
+            .apply(vec![test_media_player(
+                "player:opaque-1",
+                PlaybackStatus::Paused,
+            )])
+            .unwrap();
+        let pushed = timeout(Duration::from_secs(1), read_response(&mut reader))
+            .await
+            .unwrap();
+        let Response::MediaSnapshot {
+            request_id,
+            snapshot,
+            ..
+        } = pushed
+        else {
+            panic!("expected a pushed media snapshot");
+        };
+        assert_eq!(request_id, 0);
+        assert_eq!(snapshot.sequence, 2);
+        assert_eq!(snapshot.players[0].status, PlaybackStatus::Paused);
 
         drop(reader);
         server_task.await.unwrap().unwrap();

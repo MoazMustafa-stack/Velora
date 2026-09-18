@@ -291,18 +291,24 @@ func _run_client() -> void:
 		and backend._media_request_id != 0,
 		"P5.07 stale snapshot frames are fenced while a request is pending"
 	)
-	_emit_media(bridge, pending_request.get("request_id"), _snapshot(7, [_player("player:opaque-equal", "Equal Seq")], null))
+	_emit_media(bridge, 0, _snapshot(8, [], null))
 	_check(
-		snapshot_emissions[0] == 1
-		and int(backend.media_snapshot.get("sequence", 0)) == 7
+		snapshot_emissions[0] == 2
+		and int(backend.media_snapshot.get("sequence", 0)) == 8
+		and backend._media_request_id != 0,
+		"P5.07 a live Core push is accepted without cancelling a pending request"
+	)
+	_emit_media(bridge, pending_request.get("request_id"), _snapshot(8, [_player("player:opaque-equal", "Equal Seq")], null))
+	_check(
+		snapshot_emissions[0] == 2
+		and int(backend.media_snapshot.get("sequence", 0)) == 8
 		and backend._media_request_id == 0,
 		"P5.07 an equal sequence clears the request without replacing state"
 	)
 	_emit_media(bridge, 0, _snapshot(6, [], null))
 	_check(
-		snapshot_emissions[0] == 1
-		and int(backend.media_snapshot.get("sequence", 0)) == 7
-		and String(backend.media_snapshot.get("active_player_handle", "")) == "player:opaque-1",
+		snapshot_emissions[0] == 2
+		and int(backend.media_snapshot.get("sequence", 0)) == 8,
 		"P5.07 older sequences are fenced out without emissions"
 	)
 	_emit_media(bridge, 0, _snapshot(8, [], null))

@@ -17,9 +17,10 @@
 //!   with no display content; they are recognized and ignored.
 //!
 //! The feed is memory-only (nothing is written to disk), bounded to
-//! [`MAX_NOTIFICATIONS`] entries with drop-oldest semantics, and every string
-//! is bounded to [`MAX_STRING_BYTES`] bytes. Each entry carries an opaque,
-//! feed-issued handle and a Core-generated timestamp.
+//! [`MAX_NOTIFICATIONS`] entries and [`MAX_NOTIFICATION_PAYLOAD_BYTES`] encoded
+//! bytes with drop-oldest semantics, and every string is bounded to
+//! [`MAX_STRING_BYTES`] bytes. Each entry carries an opaque, feed-issued handle
+//! and a Core-generated timestamp.
 //!
 //! The observer is gated behind `VELORA_NOTIFICATIONS_ENABLED` (see
 //! [`crate::config::NotificationsPolicy`]). A broker that refuses `BecomeMonitor`
@@ -42,7 +43,8 @@ use thiserror::Error;
 use tokio::{sync::watch, time::timeout};
 use tracing::{debug, info, warn};
 use velora_protocol::{
-    MAX_NOTIFICATIONS, MAX_STRING_BYTES, Notification, NotificationFeed, NotificationUrgency,
+    MAX_NOTIFICATION_PAYLOAD_BYTES, MAX_NOTIFICATIONS, MAX_STRING_BYTES, Notification,
+    NotificationFeed, NotificationUrgency,
 };
 use zbus::{
     Connection, MatchRule, Message, MessageStream, fdo::MonitoringProxy, message::Type,
@@ -72,6 +74,10 @@ pub(crate) struct NotifyObservation {
 /// The bounded, memory-only notification feed served to the frontend.
 pub(crate) struct NotificationStore {
     inner: Mutex<FeedState>,
+    /// Latest bounded feed for IPC clients. A watch channel coalesces bursts,
+    /// so a slow frontend consumes constant memory and receives only the most
+    /// recent authoritative state.
+    updates: watch::Sender<Option<Arc<NotificationFeed>>>,
 }
 
 struct FeedState {
@@ -83,6 +89,7 @@ struct FeedState {
 
 impl NotificationStore {
     pub(crate) fn new() -> Self {
+        let (updates, _) = watch::channel(None);
         Self {
             inner: Mutex::new(FeedState {
                 sequence: 0,
@@ -90,6 +97,7 @@ impl NotificationStore {
                 notifications: VecDeque::new(),
                 availability: NotificationAvailability::Unavailable,
             }),
+            updates,
         }
     }
 
@@ -97,14 +105,13 @@ impl NotificationStore {
     /// The last-good feed is retained in memory even across a monitor failure,
     /// but it is only served while the monitor reports `Available`.
     pub(crate) fn current(&self) -> Option<Arc<NotificationFeed>> {
-        let state = self.inner.lock().unwrap();
-        if state.notifications.is_empty() {
-            return None;
-        }
-        Some(Arc::new(NotificationFeed {
-            sequence: state.sequence,
-            notifications: state.notifications.iter().cloned().collect(),
-        }))
+        self.updates.borrow().clone()
+    }
+
+    /// Subscribe to changed feeds for one IPC client. Intermediate bursts are
+    /// intentionally coalesced by `watch`; sequence fencing makes this safe.
+    pub(crate) fn subscribe(&self) -> watch::Receiver<Option<Arc<NotificationFeed>>> {
+        self.updates.subscribe()
     }
 
     pub(crate) fn availability(&self) -> NotificationAvailability {
@@ -116,7 +123,8 @@ impl NotificationStore {
     }
 
     /// Insert one observed notification: issue an opaque feed handle, bound its
-    /// strings, and drop the oldest entry once the bound is reached.
+    /// strings, and drop oldest entries until both structural and encoded-size
+    /// limits hold.
     pub(crate) fn observe(&self, observation: NotifyObservation, timestamp_unix_ms: u64) {
         let mut state = self.inner.lock().unwrap();
         state.sequence += 1;
@@ -131,10 +139,27 @@ impl NotificationStore {
             timestamp_unix_ms,
         };
         state.notifications.push_back(notification);
-        if state.notifications.len() > MAX_NOTIFICATIONS {
+        while state.notifications.len() > MAX_NOTIFICATIONS
+            || encoded_feed_len(state.sequence, &state.notifications)
+                > MAX_NOTIFICATION_PAYLOAD_BYTES
+        {
             state.notifications.pop_front();
         }
+        let feed = Arc::new(NotificationFeed {
+            sequence: state.sequence,
+            notifications: state.notifications.iter().cloned().collect(),
+        });
+        drop(state);
+        self.updates.send_replace(Some(feed));
     }
+}
+
+fn encoded_feed_len(sequence: u64, notifications: &VecDeque<Notification>) -> usize {
+    serde_json::to_vec(&NotificationFeed {
+        sequence,
+        notifications: notifications.iter().cloned().collect(),
+    })
+    .map_or(usize::MAX, |encoded| encoded.len())
 }
 
 /// Run the narrow monitor until shutdown. Spawned only when the privacy gate
@@ -382,7 +407,93 @@ enum NotifyParseError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::ffi::OsStrExt;
+    use std::{
+        io::{BufRead, BufReader},
+        os::unix::ffi::OsStrExt,
+        process::{Child, Command, Stdio},
+    };
+
+    /// A private `dbus-daemon` used only by notification tests. The child is
+    /// killed and reaped on drop, so failures cannot leave a daemon behind or
+    /// fall back to the user's live session bus.
+    struct PrivateBus {
+        address: String,
+        child: Child,
+        _directory: Option<tempfile::TempDir>,
+    }
+
+    impl PrivateBus {
+        fn spawn() -> Option<Self> {
+            Self::spawn_with_args(&["--session", "--nofork", "--print-address=1"], None)
+        }
+
+        fn spawn_monitor_denied() -> Option<Self> {
+            let directory = tempfile::tempdir().ok()?;
+            let config_path = directory.path().join("monitor-denied.conf");
+            std::fs::write(
+                &config_path,
+                r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <policy context="default">
+    <allow user="*"/>
+    <allow own="*"/>
+    <allow send_destination="*"/>
+    <allow receive_sender="*"/>
+    <deny send_destination="org.freedesktop.DBus"
+          send_interface="org.freedesktop.DBus.Monitoring"
+          send_member="BecomeMonitor"/>
+  </policy>
+</busconfig>
+"#,
+            )
+            .ok()?;
+            let config_arg = format!("--config-file={}", config_path.display());
+            Self::spawn_with_args(
+                &[config_arg.as_str(), "--nofork", "--print-address=1"],
+                Some(directory),
+            )
+        }
+
+        fn spawn_with_args(args: &[&str], directory: Option<tempfile::TempDir>) -> Option<Self> {
+            let mut child = Command::new("dbus-daemon")
+                .args(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let stdout = child.stdout.take()?;
+            let mut reader = BufReader::new(stdout);
+            let mut address = String::new();
+            reader.read_line(&mut address).ok()?;
+            let address = address.trim().to_owned();
+            if address.is_empty() {
+                return None;
+            }
+            Some(Self {
+                address,
+                child,
+                _directory: directory,
+            })
+        }
+
+        async fn connect(&self) -> Connection {
+            zbus::connection::Builder::address(self.address.as_str())
+                .unwrap()
+                .build()
+                .await
+                .unwrap()
+        }
+    }
+
+    impl Drop for PrivateBus {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
 
     fn observation(app_name: &str) -> NotifyObservation {
         NotifyObservation {
@@ -424,14 +535,55 @@ mod tests {
         }
 
         let feed = store.current().unwrap();
-        assert_eq!(feed.notifications.len(), MAX_NOTIFICATIONS);
-        // The oldest five entries were dropped.
-        assert_eq!(feed.notifications[0].app_name, "app-5");
+        assert!(feed.notifications.len() <= MAX_NOTIFICATIONS);
+        // At least the oldest five entries were dropped by the count bound;
+        // the byte budget may conservatively drop more.
+        assert_ne!(feed.notifications[0].app_name, "app-0");
         assert_eq!(
             feed.notifications.last().unwrap().app_name,
             format!("app-{}", MAX_NOTIFICATIONS + 4)
         );
+        assert!(serde_json::to_vec(&*feed).unwrap().len() <= MAX_NOTIFICATION_PAYLOAD_BYTES);
         feed.validate().unwrap();
+    }
+
+    #[test]
+    fn payload_budget_drops_oldest_full_width_notifications() {
+        let store = NotificationStore::new();
+        for index in 0..MAX_NOTIFICATIONS {
+            store.observe(
+                NotifyObservation {
+                    app_name: format!("app-{index}"),
+                    summary: "s".repeat(MAX_STRING_BYTES),
+                    body: "b".repeat(MAX_STRING_BYTES),
+                    urgency: NotificationUrgency::Normal,
+                },
+                index as u64,
+            );
+        }
+
+        let feed = store.current().unwrap();
+        assert!(feed.notifications.len() < MAX_NOTIFICATIONS);
+        assert!(serde_json::to_vec(&*feed).unwrap().len() <= MAX_NOTIFICATION_PAYLOAD_BYTES);
+        assert_eq!(
+            feed.notifications.last().unwrap().app_name,
+            format!("app-{}", MAX_NOTIFICATIONS - 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribers_receive_only_the_latest_bounded_feed() {
+        let store = NotificationStore::new();
+        let mut updates = store.subscribe();
+        for index in 0..100 {
+            store.observe(observation(&format!("app-{index}")), index);
+        }
+
+        updates.changed().await.unwrap();
+        let feed = updates.borrow_and_update().clone().unwrap();
+        assert_eq!(feed.sequence, 100);
+        assert_eq!(feed.notifications.last().unwrap().app_name, "app-99");
+        assert!(serde_json::to_vec(&*feed).unwrap().len() <= MAX_NOTIFICATION_PAYLOAD_BYTES);
     }
 
     #[test]
@@ -597,6 +749,77 @@ mod tests {
     async fn denied_monitoring_classifies_as_restricted() {
         assert_eq!(
             monitor_error_availability(&MonitorError::AccessDenied),
+            NotificationAvailability::Restricted
+        );
+    }
+
+    #[tokio::test]
+    async fn private_bus_synthetic_notify_reaches_the_memory_only_feed() {
+        let Some(bus) = PrivateBus::spawn() else {
+            eprintln!("dbus-daemon unavailable; skipping");
+            return;
+        };
+        let monitor = establish_monitor(Some(OsStr::new(&bus.address)))
+            .await
+            .unwrap();
+        let sender = bus.connect().await;
+        let store = Arc::new(NotificationStore::new());
+        store.set_availability(NotificationAvailability::Available);
+        let mut updates = store.subscribe();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let monitor_task = tokio::spawn(run_stream(Arc::clone(&store), monitor, shutdown_rx));
+
+        let mut hints = HashMap::<String, OwnedValue>::new();
+        hints.insert("urgency".to_owned(), OwnedValue::from(2u8));
+        let message = Message::method_call("/org/freedesktop/Notifications", NOTIFY_MEMBER)
+            .unwrap()
+            .destination(NOTIFICATIONS_INTERFACE)
+            .unwrap()
+            .interface(NOTIFICATIONS_INTERFACE)
+            .unwrap()
+            .build(&(
+                "Private Test".to_owned(),
+                0u32,
+                String::new(),
+                "Synthetic summary".to_owned(),
+                "Synthetic body".to_owned(),
+                Vec::<String>::new(),
+                hints,
+                -1i32,
+            ))
+            .unwrap();
+        sender.send(&message).await.unwrap();
+
+        timeout(Duration::from_secs(2), updates.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        let feed = updates.borrow_and_update().clone().unwrap();
+        assert_eq!(feed.notifications.len(), 1);
+        assert_eq!(feed.notifications[0].app_name, "Private Test");
+        assert_eq!(feed.notifications[0].summary, "Synthetic summary");
+        assert_eq!(feed.notifications[0].urgency, NotificationUrgency::Critical);
+        assert!(serde_json::to_vec(&*feed).unwrap().len() <= MAX_NOTIFICATION_PAYLOAD_BYTES);
+
+        let _ = shutdown_tx.send(true);
+        timeout(Duration::from_secs(1), monitor_task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn private_bus_denial_is_typed_restricted_without_retrying() {
+        let Some(bus) = PrivateBus::spawn_monitor_denied() else {
+            eprintln!("dbus-daemon unavailable; skipping");
+            return;
+        };
+        let error = establish_monitor(Some(OsStr::new(&bus.address)))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, MonitorError::AccessDenied));
+        assert_eq!(
+            monitor_error_availability(&error),
             NotificationAvailability::Restricted
         );
     }

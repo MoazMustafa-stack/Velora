@@ -150,10 +150,7 @@ impl MediaStore {
     }
 
     /// Subscribe to changed snapshots for one IPC client. The receiver holds
-    /// the most recent snapshot and coalesces bursts safely. The poll-based
-    /// media client reads `current()` today; this surface is the changed-only
-    /// publication boundary and is exercised by the store tests.
-    #[allow(dead_code)]
+    /// the most recent snapshot and coalesces bursts safely.
     pub(crate) fn subscribe(&self) -> watch::Receiver<Option<Arc<MediaSnapshot>>> {
         self.updates.subscribe()
     }

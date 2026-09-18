@@ -892,10 +892,11 @@ func _on_media_snapshot(message: Dictionary) -> void:
 	if state != ConnectionState.READY:
 		return
 	var request_id := int(message.get("request_id", 0))
-	if _media_request_id != 0 and request_id != _media_request_id:
-		connection_changed.emit("CORE // STALE MEDIA SNAPSHOT")
-		return
-	_media_request_id = 0
+	if request_id != 0:
+		if _media_request_id == 0 or request_id != _media_request_id:
+			connection_changed.emit("CORE // STALE MEDIA SNAPSHOT")
+			return
+		_media_request_id = 0
 	var snapshot := _normalize_media_snapshot(message.get("snapshot", null))
 	if snapshot.is_empty():
 		_emit_ux_status("media_failed", "INVALID MEDIA DATA", "failure", 3.0)
@@ -926,10 +927,11 @@ func _on_notifications(message: Dictionary) -> void:
 	if state != ConnectionState.READY:
 		return
 	var request_id := int(message.get("request_id", 0))
-	if _notifications_request_id != 0 and request_id != _notifications_request_id:
-		connection_changed.emit("CORE // STALE NOTIFICATION FEED")
-		return
-	_notifications_request_id = 0
+	if request_id != 0:
+		if _notifications_request_id == 0 or request_id != _notifications_request_id:
+			connection_changed.emit("CORE // STALE NOTIFICATION FEED")
+			return
+		_notifications_request_id = 0
 	var feed := _normalize_notification_feed(message.get("feed", null))
 	if feed.is_empty():
 		_emit_ux_status("notifications_failed", "INVALID NOTIFICATION DATA", "failure", 3.0)

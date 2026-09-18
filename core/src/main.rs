@@ -29,7 +29,11 @@ async fn main() -> Result<()> {
 
     let config = config::CoreConfig::from_environment()?;
     let hyprland_capabilities = hyprland::probe_from_environment().await;
-    let dbus_capabilities = dbus::probe_from_environment().await;
+    let dbus_capabilities = if config.media.enabled || config.notifications.enabled {
+        dbus::probe_from_environment().await
+    } else {
+        dbus::DbusCapabilities::unavailable()
+    };
     let application_directories = apps::application_directories()?;
     let desktop_files = apps::discover_desktop_files(&application_directories)?;
     let applications = apps::load_applications(&desktop_files);
@@ -62,13 +66,18 @@ async fn main() -> Result<()> {
         "Hyprland capability probe completed"
     );
     info!(?dbus_capabilities, "D-Bus capability probe completed");
+    info!(
+        media_enabled = config.media.enabled,
+        notifications_enabled = config.notifications.enabled,
+        "D-Bus integration policy resolved"
+    );
 
     let session_runtime = start_session_store(&hyprland_capabilities);
     let telemetry_enabled = config.telemetry.enabled;
     let telemetry_runtime = start_telemetry_sampler(config.telemetry);
     let notifications_enabled = config.notifications.enabled;
     let notifications_runtime = start_notification_monitor(config.notifications);
-    let media_runtime = start_media_store(&dbus_capabilities);
+    let media_runtime = start_media_store(&dbus_capabilities, config.media);
     let result = ipc::serve(
         config,
         applications.into(),
@@ -122,8 +131,11 @@ fn start_notification_monitor(policy: config::NotificationsPolicy) -> Notificati
 /// warm in the background (discovery/signal listener plus the media store),
 /// mirroring `start_telemetry_sampler`. A missing or unavailable bus leaves the
 /// runtime absent so the IPC handler answers with the typed unavailable path.
-fn start_media_store(dbus: &dbus::DbusCapabilities) -> Option<MediaRuntime> {
-    if dbus.media != dbus::MediaAvailability::Available {
+fn start_media_store(
+    dbus: &dbus::DbusCapabilities,
+    policy: config::MediaPolicy,
+) -> Option<MediaRuntime> {
+    if !policy.enabled || dbus.media != dbus::MediaAvailability::Available {
         return None;
     }
     let store = Arc::new(media_store::MediaStore::from_environment());

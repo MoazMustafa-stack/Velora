@@ -7,6 +7,7 @@ use velora_protocol::{
 
 const TELEMETRY_INTERVAL_ENV: &str = "VELORA_TELEMETRY_INTERVAL_MS";
 const TELEMETRY_ENABLED_ENV: &str = "VELORA_TELEMETRY_ENABLED";
+const MEDIA_ENABLED_ENV: &str = "VELORA_MEDIA_ENABLED";
 const NOTIFICATIONS_ENABLED_ENV: &str = "VELORA_NOTIFICATIONS_ENABLED";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,15 +73,9 @@ impl TelemetryPolicy {
 /// is the most privacy-sensitive capability Core has, so it is explicitly
 /// toggleable; when disabled Core never opens a monitor connection and answers
 /// notification requests with a typed unavailable result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct NotificationsPolicy {
     pub enabled: bool,
-}
-
-impl Default for NotificationsPolicy {
-    fn default() -> Self {
-        Self { enabled: true }
-    }
 }
 
 impl NotificationsPolicy {
@@ -99,10 +94,41 @@ impl NotificationsPolicy {
     }
 }
 
+/// Capability gate for MPRIS media observation and control. Media remains
+/// enabled by default for the desktop experience, but tests and privacy-aware
+/// sessions can disable every session-bus media connection explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaPolicy {
+    pub enabled: bool,
+}
+
+impl Default for MediaPolicy {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+impl MediaPolicy {
+    fn from_environment() -> Result<Self> {
+        Ok(Self {
+            enabled: match env::var(MEDIA_ENABLED_ENV) {
+                Ok(value) => value
+                    .parse::<bool>()
+                    .with_context(|| format!("{MEDIA_ENABLED_ENV} must be true or false"))?,
+                Err(env::VarError::NotPresent) => Self::default().enabled,
+                Err(env::VarError::NotUnicode(_)) => {
+                    bail!("{MEDIA_ENABLED_ENV} must contain valid UTF-8")
+                }
+            },
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CoreConfig {
     pub socket_path: PathBuf,
     pub telemetry: TelemetryPolicy,
+    pub media: MediaPolicy,
     pub notifications: NotificationsPolicy,
 }
 
@@ -111,6 +137,7 @@ impl CoreConfig {
         Ok(Self {
             socket_path: default_socket_path()?,
             telemetry: TelemetryPolicy::from_environment()?,
+            media: MediaPolicy::from_environment()?,
             notifications: NotificationsPolicy::from_environment()?,
         })
     }
@@ -179,9 +206,9 @@ mod tests {
     }
 
     #[test]
-    fn notifications_policy_defaults_to_enabled() {
+    fn notifications_policy_defaults_to_disabled() {
         let policy = NotificationsPolicy::default();
-        assert!(policy.enabled);
+        assert!(!policy.enabled);
     }
 
     #[test]
@@ -189,7 +216,7 @@ mod tests {
         unsafe {
             env::remove_var(NOTIFICATIONS_ENABLED_ENV);
             let policy = NotificationsPolicy::from_environment().unwrap();
-            assert!(policy.enabled);
+            assert!(!policy.enabled);
 
             env::set_var(NOTIFICATIONS_ENABLED_ENV, "false");
             let policy = NotificationsPolicy::from_environment().unwrap();
@@ -203,6 +230,25 @@ mod tests {
             assert!(NotificationsPolicy::from_environment().is_err());
 
             env::remove_var(NOTIFICATIONS_ENABLED_ENV);
+        }
+    }
+
+    #[test]
+    fn media_policy_defaults_to_enabled_and_parses_the_environment() {
+        unsafe {
+            env::remove_var(MEDIA_ENABLED_ENV);
+            assert!(MediaPolicy::from_environment().unwrap().enabled);
+
+            env::set_var(MEDIA_ENABLED_ENV, "false");
+            assert!(!MediaPolicy::from_environment().unwrap().enabled);
+
+            env::set_var(MEDIA_ENABLED_ENV, "true");
+            assert!(MediaPolicy::from_environment().unwrap().enabled);
+
+            env::set_var(MEDIA_ENABLED_ENV, "maybe");
+            assert!(MediaPolicy::from_environment().is_err());
+
+            env::remove_var(MEDIA_ENABLED_ENV);
         }
     }
 }
