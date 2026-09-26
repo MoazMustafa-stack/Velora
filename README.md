@@ -5,7 +5,7 @@
 > visual direction, and Linux integrations are expected to change.
 
 [![Status: work in progress](https://img.shields.io/badge/status-work_in_progress-f59e0b)](#project-status)
-[![Phase: 5 local gate passed](https://img.shields.io/badge/phase-5_local_gate_passed-22c55e)](#current-status)
+[![Phase: 6 frontend foundation](https://img.shields.io/badge/phase-6_frontend_foundation-22c55e)](#current-status)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-22c55e)](LICENSE)
 [![CI](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml/badge.svg)](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml)
 [![Buy me a coffee](https://img.shields.io/badge/Support-Ko--fi-ff5e5b)](https://ko-fi.com/moazmustafa)
@@ -30,9 +30,14 @@ normal desktop remains available if Velora exits.
 
 ## Current status
 
-Phases 1–4 are complete and merged to `main`. Phase 5 (D-Bus media and
-notifications) is implemented on `dbus-media-core`; its cumulative local
-release gate passes, and the work is awaiting commit/review/merge.
+Phases 1–5 are complete and merged to `main` (Phase 5: PR #8).
+Phase 6 is the frontend experience pass, not another system integration.
+Its D6.01–D6.04 foundation introduces semantic design tokens, shared panel
+and list primitives, a bounded UI-only preferences API, and one modal/input
+coordinator. See the [visual inventory](frontend/godot/ASSET_INVENTORY.md)
+and [settings contract](config/README.md). Settings screens, onboarding,
+art redesign, accessibility controls, audio, remapping UI, and station
+customization remain later Phase 6 work.
 
 Phase 1.01–1.10 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
 hub, eight-direction movement with four-direction facing, sprinting, physical
