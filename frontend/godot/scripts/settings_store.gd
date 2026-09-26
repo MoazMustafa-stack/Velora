@@ -79,8 +79,12 @@ func load_settings() -> Error:
 		return FileAccess.get_open_error()
 	if file.get_length() > MAX_BYTES:
 		return ERR_INVALID_DATA
+	# Bound the actual read too, in case another process grows the file.
+	var bytes := file.get_buffer(MAX_BYTES + 1)
+	if bytes.size() > MAX_BYTES:
+		return ERR_INVALID_DATA
 	var parser := JSON.new()
-	if parser.parse(file.get_as_text()) != OK or not parser.data is Dictionary:
+	if parser.parse(bytes.get_string_from_utf8()) != OK or not parser.data is Dictionary:
 		return ERR_PARSE_ERROR
 	var data: Dictionary = parser.data
 	if data.get("version") != VERSION:
