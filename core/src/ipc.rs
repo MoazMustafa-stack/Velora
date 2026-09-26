@@ -234,10 +234,12 @@ where
     info!("frontend connected");
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
+    // Keep partial frames across cancellation by unsolicited snapshot updates.
+    let mut frame_bytes = Vec::new();
 
     let first_frame = match timeout(
         Duration::from_secs(HANDSHAKE_TIMEOUT_SECONDS),
-        read_frame(&mut reader),
+        read_frame(&mut reader, &mut frame_bytes),
     )
     .await
     {
@@ -326,7 +328,7 @@ where
     let mut notification_updates_enabled = false;
     loop {
         let line = tokio::select! {
-            frame = read_frame(&mut reader) => {
+            frame = read_frame(&mut reader, &mut frame_bytes) => {
                 let Some(line) = frame_to_line(frame?, &mut writer).await? else {
                     break;
                 };
@@ -935,11 +937,10 @@ enum Frame {
     InvalidUtf8,
 }
 
-async fn read_frame<R>(reader: &mut R) -> io::Result<Frame>
+async fn read_frame<R>(reader: &mut R, bytes: &mut Vec<u8>) -> io::Result<Frame>
 where
     R: AsyncBufRead + Unpin,
 {
-    let mut bytes = Vec::new();
     loop {
         let available = reader.fill_buf().await?;
         if available.is_empty() {
@@ -957,7 +958,7 @@ where
             }
             bytes.extend_from_slice(&available[..newline_index]);
             reader.consume(newline_index + 1);
-            return Ok(match String::from_utf8(bytes) {
+            return Ok(match String::from_utf8(std::mem::take(bytes)) {
                 Ok(line) => Frame::Line(line),
                 Err(_) => Frame::InvalidUtf8,
             });
@@ -1063,6 +1064,32 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
     use tokio::sync::oneshot;
     use velora_protocol::{MediaControlVerb, MediaPlayer, NotificationUrgency, PlaybackStatus};
+
+    #[tokio::test]
+    async fn partial_frame_survives_snapshot_cancellation() {
+        let (mut client, server) = tokio::io::duplex(128);
+        let mut reader = BufReader::new(server);
+        let mut bytes = Vec::new();
+        client.write_all(b"{\"type\":").await.unwrap();
+
+        // Poll the read first, then simulate a ready snapshot branch cancelling it.
+        tokio::select! {
+            biased;
+            _ = read_frame(&mut reader, &mut bytes) => panic!("incomplete frame completed"),
+            _ = ready(()) => {}
+        }
+        assert_eq!(bytes, b"{\"type\":");
+        client.write_all(b"\"ping\"}\nnext\n").await.unwrap();
+        let Frame::Line(line) = read_frame(&mut reader, &mut bytes).await.unwrap() else {
+            panic!("expected complete frame");
+        };
+        assert_eq!(line, "{\"type\":\"ping\"}");
+        assert!(bytes.is_empty());
+        let Frame::Line(line) = read_frame(&mut reader, &mut bytes).await.unwrap() else {
+            panic!("expected subsequent frame");
+        };
+        assert_eq!(line, "next");
+    }
 
     #[derive(Clone, Copy)]
     enum MockLaunchOutcome {
