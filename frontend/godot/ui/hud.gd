@@ -1,10 +1,8 @@
 extends CanvasLayer
 
-const TONE_COLORS := {
-	"ready": Color("9af4e7"),
-	"waiting": Color("f5b943"),
-	"failure": Color("e05a67"),
-}
+const Tokens = preload("res://ui/design_tokens.gd")
+
+const TONE_COLORS := Tokens.TONES
 
 @onready var status: Label = $StatusPanel/Margin/Status
 @onready var connection: Label = $ConnectionPanel/Margin/Connection
@@ -26,7 +24,7 @@ func _ready() -> void:
 	_telemetry = Label.new()
 	_telemetry.position = Vector2(8, 146)
 	_telemetry.size = Vector2(304, 12)
-	_telemetry.add_theme_font_size_override("font_size", 7)
+	_telemetry.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	_telemetry.clip_text = true
 	add_child(_telemetry)
 	set_telemetry_availability("waiting")

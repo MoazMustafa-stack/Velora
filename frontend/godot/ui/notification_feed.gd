@@ -1,5 +1,10 @@
 extends CanvasLayer
 
+const Actions = preload("res://scripts/input_actions.gd")
+const Shell = preload("res://ui/panel_shell.gd")
+const Cursor = preload("res://ui/list_cursor.gd")
+const Tokens = preload("res://ui/design_tokens.gd")
+
 signal feed_closed
 
 # P5.10 notification feed panel.
@@ -11,14 +16,10 @@ signal feed_closed
 # applied instantly with no animated transitions, so the panel writes
 # nothing to disk and the reduced-motion guarantee holds by construction.
 
-const TONE_COLORS := {
-	"ready": Color("9af4e7"),
-	"waiting": Color("f5b943"),
-	"failure": Color("e05a67"),
-}
-const DIM_COLOR := Color("586a80")
-const ROW_BG := Color("0c1c33")
-const ROW_BG_SELECTED := Color("16324f")
+const TONE_COLORS := Tokens.TONES
+const DIM_COLOR := Tokens.MUTED
+const ROW_BG := Tokens.SURFACE
+const ROW_BG_SELECTED := Tokens.SELECTED
 # Urgency never relies on color alone: every level renders a distinct marker
 # glyph plus its spelled name, and color is only a secondary channel.
 const URGENCY_MARKERS := {
@@ -32,9 +33,9 @@ const URGENCY_LABELS := {
 	"low": "LOW",
 }
 const URGENCY_COLORS := {
-	"critical": Color("e05a67"),
-	"normal": Color("dce4f0"),
-	"low": Color("586a80"),
+	"critical": Tokens.FAILURE,
+	"normal": Tokens.TEXT,
+	"low": Tokens.MUTED,
 }
 const FALLBACK_URGENCY := "normal"
 const MAX_VISIBLE_ENTRIES := 4
@@ -43,8 +44,12 @@ const MAX_VISIBLE_ENTRIES := 4
 const MAX_TRACKED_ENTRIES := 32
 
 var entries: Array[Dictionary] = []
-var selected_index := -1
-var scroll_offset := 0
+var _cursor := Cursor.new(MAX_VISIBLE_ENTRIES)
+var selected_index: int:
+	get: return _cursor.selected
+var scroll_offset: int:
+	get: return _cursor.offset
+var _shell: RefCounted
 var availability := "waiting"
 
 var _panel: PanelContainer
@@ -55,35 +60,34 @@ var _hint: Label
 var _rows: Array[Dictionary] = []
 
 func _ready() -> void:
+	Actions.ensure_registered()
 	visible = false
 	_build_ui()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_ESCAPE, KEY_N:
-				get_viewport().set_input_as_handled()
-				close()
-			KEY_UP, KEY_W:
-				get_viewport().set_input_as_handled()
-				_move_selection(-1)
-			KEY_DOWN, KEY_S:
-				get_viewport().set_input_as_handled()
-				_move_selection(1)
-			KEY_LEFT, KEY_A, KEY_PAGEUP:
-				get_viewport().set_input_as_handled()
-				_move_selection(-MAX_VISIBLE_ENTRIES)
-			KEY_RIGHT, KEY_D, KEY_PAGEDOWN:
-				get_viewport().set_input_as_handled()
-				_move_selection(MAX_VISIBLE_ENTRIES)
-			KEY_HOME:
-				get_viewport().set_input_as_handled()
-				_select_index(0)
-			KEY_END:
-				get_viewport().set_input_as_handled()
-				_select_index(entries.size() - 1)
+	if Actions.pressed(event, "back") or Actions.pressed(event, "notification_feed"):
+		get_viewport().set_input_as_handled()
+		close()
+	elif Actions.pressed(event, "nav_up"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-1)
+	elif Actions.pressed(event, "nav_down"):
+		get_viewport().set_input_as_handled()
+		_move_selection(1)
+	elif Actions.pressed(event, "page_up") or Actions.pressed(event, "nav_left"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-MAX_VISIBLE_ENTRIES)
+	elif Actions.pressed(event, "page_down") or Actions.pressed(event, "nav_right"):
+		get_viewport().set_input_as_handled()
+		_move_selection(MAX_VISIBLE_ENTRIES)
+	elif Actions.pressed(event, "first"):
+		get_viewport().set_input_as_handled()
+		_select_index(0)
+	elif Actions.pressed(event, "last"):
+		get_viewport().set_input_as_handled()
+		_select_index(entries.size() - 1)
 
 func open() -> void:
 	visible = true
@@ -92,12 +96,6 @@ func open() -> void:
 func close() -> void:
 	visible = false
 	feed_closed.emit()
-
-func toggle() -> void:
-	if visible:
-		close()
-	else:
-		open()
 
 func set_availability(next_availability: String) -> void:
 	availability = next_availability
@@ -138,12 +136,8 @@ func _selected_handle() -> String:
 	return ""
 
 func _preserve_selection(handle: String) -> void:
-	if not handle.is_empty():
-		for index in range(entries.size()):
-			if String(entries[index].get("handle", "")) == handle:
-				_select_index(index)
-				return
-	_select_index(selected_index)
+	_cursor.preserve(entries.map(func(entry: Dictionary): return entry["handle"]), handle, selected_index)
+	_refresh_rows()
 
 func _newest_first(a: Dictionary, b: Dictionary) -> bool:
 	var a_time := int(a.get("timestamp_unix_ms", 0))
@@ -154,29 +148,11 @@ func _newest_first(a: Dictionary, b: Dictionary) -> bool:
 	return String(a.get("handle", "")) < String(b.get("handle", ""))
 
 func _move_selection(step: int) -> void:
-	if entries.is_empty():
-		return
-	if selected_index < 0:
-		_select_index(0)
-		return
-	var count := entries.size()
-	var next_index := selected_index + step
-	while next_index < 0:
-		next_index += count
-	_select_index(next_index % count)
+	_cursor.move(step, entries.size())
+	_refresh_rows()
 
 func _select_index(index: int) -> void:
-	if entries.is_empty():
-		selected_index = -1
-		scroll_offset = 0
-		_refresh_rows()
-		return
-	selected_index = clampi(index, 0, entries.size() - 1)
-	if selected_index < scroll_offset:
-		scroll_offset = selected_index
-	elif selected_index >= scroll_offset + MAX_VISIBLE_ENTRIES:
-		scroll_offset = selected_index - MAX_VISIBLE_ENTRIES + 1
-	scroll_offset = clampi(scroll_offset, 0, maxi(0, entries.size() - MAX_VISIBLE_ENTRIES))
+	_cursor.select(index, entries.size())
 	_refresh_rows()
 
 func _refresh_title() -> void:
@@ -255,87 +231,14 @@ func _refresh_counter() -> void:
 		_counter.text = "%d/%d" % [selected_index + 1, entries.size()]
 
 func _build_ui() -> void:
-	var shade := ColorRect.new()
-	shade.name = "Shade"
-	shade.color = Color(0.027451, 0.039216, 0.07451, 0.901961)
-	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(shade)
-
-	_panel = PanelContainer.new()
-	_panel.position = Vector2(40, 24)
-	_panel.custom_minimum_size = Vector2(240, 0)
-	add_child(_panel)
-
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 8)
-	margin.add_theme_constant_override("margin_top", 5)
-	margin.add_theme_constant_override("margin_right", 8)
-	margin.add_theme_constant_override("margin_bottom", 5)
-	_panel.add_child(margin)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	margin.add_child(box)
-
-	var header := HBoxContainer.new()
-	box.add_child(header)
-
-	_title = Label.new()
+	_shell = Shell.new(self)
+	_panel = _shell.panel
+	_title = _shell.title
 	_title.text = "NOTIFICATIONS // WAITING"
-	_title.add_theme_font_size_override("font_size", 8)
-	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
-	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_title.clip_text = true
-	_title.text_overrun_behavior = 3
-	header.add_child(_title)
-
-	_counter = Label.new()
-	_counter.text = "0/0"
-	_counter.add_theme_font_size_override("font_size", 8)
-	_counter.add_theme_color_override("font_color", DIM_COLOR)
-	header.add_child(_counter)
-
+	_counter = _shell.counter
 	_rows_box = VBoxContainer.new()
-	_rows_box.add_theme_constant_override("separation", 2)
-	box.add_child(_rows_box)
-
-	# The row structure is fixed and every row keeps the same two clipped
-	# lines regardless of content, so feed bursts can never reflow the panel.
+	_rows_box.add_theme_constant_override("separation", Tokens.SPACE / 2)
+	_shell.box.add_child(_rows_box)
 	for _row_index in range(MAX_VISIBLE_ENTRIES):
-		_rows.append(_build_row())
-
-	_hint = Label.new()
-	_hint.text = "ARROWS SCROLL  N CLOSE"
-	_hint.add_theme_font_size_override("font_size", 7)
-	_hint.add_theme_color_override("font_color", DIM_COLOR)
-	box.add_child(_hint)
-
-func _build_row() -> Dictionary:
-	var row := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = ROW_BG
-	style.content_margin_left = 4
-	style.content_margin_right = 4
-	style.content_margin_top = 2
-	style.content_margin_bottom = 2
-	row.add_theme_stylebox_override("panel", style)
-	_rows_box.add_child(row)
-
-	var lines := VBoxContainer.new()
-	lines.add_theme_constant_override("separation", 0)
-	row.add_child(lines)
-
-	var summary := Label.new()
-	summary.add_theme_font_size_override("font_size", 7)
-	summary.clip_text = true
-	summary.text_overrun_behavior = 3
-	lines.add_child(summary)
-
-	var detail := Label.new()
-	detail.add_theme_font_size_override("font_size", 7)
-	detail.add_theme_color_override("font_color", DIM_COLOR)
-	detail.clip_text = true
-	detail.text_overrun_behavior = 3
-	lines.add_child(detail)
-
-	return {"panel": row, "style": style, "summary": summary, "detail": detail}
+		_rows.append(Shell.row(_rows_box))
+	_hint = _shell.finish("ARROWS SCROLL  N CLOSE")

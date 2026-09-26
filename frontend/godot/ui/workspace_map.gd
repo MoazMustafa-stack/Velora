@@ -1,23 +1,26 @@
 extends CanvasLayer
 
+const Actions = preload("res://scripts/input_actions.gd")
+const Shell = preload("res://ui/panel_shell.gd")
+const Cursor = preload("res://ui/list_cursor.gd")
+const Tokens = preload("res://ui/design_tokens.gd")
+
 signal switch_requested(workspace_handle: String)
 signal map_closed
 
-const TONE_COLORS := {
-	"ready": Color("9af4e7"),
-	"waiting": Color("f5b943"),
-	"failure": Color("e05a67"),
-}
-const TEXT_COLOR := Color("dce4f0")
-const DIM_COLOR := Color("586a80")
-const PANEL_BG := Color("071226")
-const CELL_BG := Color("0c1c33")
-const CELL_BG_SELECTED := Color("16324f")
+const TONE_COLORS := Tokens.TONES
+const TEXT_COLOR := Tokens.TEXT
+const DIM_COLOR := Tokens.MUTED
+const CELL_BG := Tokens.SURFACE
+const CELL_BG_SELECTED := Tokens.SELECTED
 const COLUMNS := 5
 const MAX_VISIBLE_WORKSPACES := 20
 
 var visible_workspaces: Array[Dictionary] = []
-var selected_index := -1
+var _cursor := Cursor.new(MAX_VISIBLE_WORKSPACES)
+var selected_index: int:
+	get: return _cursor.selected
+var _shell: RefCounted
 
 var _panel: PanelContainer
 var _title: Label
@@ -26,38 +29,37 @@ var _hint: Label
 var _cells: Array[Dictionary] = []
 
 func _ready() -> void:
+	Actions.ensure_registered()
 	visible = false
 	_build_ui()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_TAB, KEY_M, KEY_ESCAPE:
-				get_viewport().set_input_as_handled()
-				close()
-			KEY_LEFT, KEY_A:
-				get_viewport().set_input_as_handled()
-				_move_selection(-1)
-			KEY_RIGHT, KEY_D:
-				get_viewport().set_input_as_handled()
-				_move_selection(1)
-			KEY_UP, KEY_W:
-				get_viewport().set_input_as_handled()
-				_move_selection(-COLUMNS)
-			KEY_DOWN, KEY_S:
-				get_viewport().set_input_as_handled()
-				_move_selection(COLUMNS)
-			KEY_HOME:
-				get_viewport().set_input_as_handled()
-				_select_index(0)
-			KEY_END:
-				get_viewport().set_input_as_handled()
-				_select_index(visible_workspaces.size() - 1)
-			KEY_ENTER, KEY_KP_ENTER:
-				get_viewport().set_input_as_handled()
-				_confirm_selection()
+	if Actions.pressed(event, "back") or Actions.pressed(event, "workspace_map"):
+		get_viewport().set_input_as_handled()
+		close()
+	elif Actions.pressed(event, "nav_left"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-1)
+	elif Actions.pressed(event, "nav_right"):
+		get_viewport().set_input_as_handled()
+		_move_selection(1)
+	elif Actions.pressed(event, "nav_up"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-COLUMNS)
+	elif Actions.pressed(event, "nav_down"):
+		get_viewport().set_input_as_handled()
+		_move_selection(COLUMNS)
+	elif Actions.pressed(event, "first"):
+		get_viewport().set_input_as_handled()
+		_select_index(0)
+	elif Actions.pressed(event, "last"):
+		get_viewport().set_input_as_handled()
+		_select_index(visible_workspaces.size() - 1)
+	elif Actions.pressed(event, "confirm"):
+		get_viewport().set_input_as_handled()
+		_confirm_selection()
 
 func open() -> void:
 	visible = true
@@ -66,12 +68,6 @@ func open() -> void:
 func close() -> void:
 	visible = false
 	map_closed.emit()
-
-func toggle() -> void:
-	if visible:
-		close()
-	else:
-		open()
 
 func set_availability(availability: String) -> void:
 	match availability:
@@ -82,19 +78,22 @@ func set_availability(availability: String) -> void:
 			_title.text = "WORKSPACES // NO HYPRLAND"
 			_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
 			visible_workspaces.clear()
-			selected_index = -1
+			_cursor.select(-1, 0)
 			_refresh_grid()
 		"incompatible":
 			_title.text = "WORKSPACES // INCOMPATIBLE"
 			_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
 			visible_workspaces.clear()
-			selected_index = -1
+			_cursor.select(-1, 0)
 			_refresh_grid()
 		_:
 			_title.text = "WORKSPACES // WAITING"
 			_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
 
 func update_session(snapshot: Dictionary) -> void:
+	var selected_handle := ""
+	if selected_index >= 0 and selected_index < visible_workspaces.size():
+		selected_handle = String(visible_workspaces[selected_index]["handle"])
 	var raw_workspaces = snapshot.get("workspaces", [])
 	if not raw_workspaces is Array:
 		return
@@ -111,7 +110,7 @@ func update_session(snapshot: Dictionary) -> void:
 	)
 	visible_workspaces = workspaces.slice(0, MAX_VISIBLE_WORKSPACES)
 	set_availability("available")
-	selected_index = _default_selection()
+	_cursor.preserve(visible_workspaces.map(func(workspace: Dictionary): return workspace["handle"]), selected_handle, _default_selection())
 	_refresh_grid()
 
 func _default_selection() -> int:
@@ -122,10 +121,10 @@ func _default_selection() -> int:
 
 func _select_index(index: int) -> void:
 	if visible_workspaces.is_empty():
-		selected_index = -1
+		_cursor.select(-1, 0)
 		return
 	var previous := selected_index
-	selected_index = clampi(index, 0, visible_workspaces.size() - 1)
+	_cursor.select(index, visible_workspaces.size())
 	if _cells.size() != visible_workspaces.size():
 		_refresh_grid()
 		return
@@ -133,16 +132,10 @@ func _select_index(index: int) -> void:
 	_set_cell_selected(selected_index, true)
 
 func _move_selection(step: int) -> void:
-	if visible_workspaces.is_empty():
-		return
-	if selected_index < 0:
-		_select_index(0)
-		return
-	var count := visible_workspaces.size()
-	var next := selected_index + step
-	while next < 0:
-		next += count
-	_select_index(next % count)
+	var previous := selected_index
+	_cursor.move(step, visible_workspaces.size())
+	_set_cell_selected(previous, false)
+	_set_cell_selected(selected_index, true)
 
 func _confirm_selection() -> void:
 	if selected_index < 0 or selected_index >= visible_workspaces.size():
@@ -160,7 +153,7 @@ func _refresh_grid() -> void:
 	if visible_workspaces.is_empty():
 		var empty_label := Label.new()
 		empty_label.text = "NO SESSION DATA"
-		empty_label.add_theme_font_size_override("font_size", 7)
+		empty_label.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 		empty_label.add_theme_color_override("font_color", DIM_COLOR)
 		_grid.add_child(empty_label)
 		return
@@ -198,12 +191,14 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 		tone_color = TONE_COLORS["waiting"]
 
 	var cell := PanelContainer.new()
+	# Explicit width keeps clipped text readable rather than collapsing cells.
+	cell.custom_minimum_size.x = floorf((Tokens.PANEL_WIDTH - 16 - 3 * (COLUMNS - 1)) / COLUMNS)
 	var style := StyleBoxFlat.new()
 	style.bg_color = CELL_BG_SELECTED if index == selected_index else CELL_BG
 	style.content_margin_left = 4
 	style.content_margin_right = 4
-	style.content_margin_top = 2
-	style.content_margin_bottom = 2
+	style.content_margin_top = 1
+	style.content_margin_bottom = 1
 	cell.add_theme_stylebox_override("panel", style)
 
 	var box := VBoxContainer.new()
@@ -212,7 +207,7 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 
 	var header := Label.new()
 	header.text = "%s%s" % [marker, display_name]
-	header.add_theme_font_size_override("font_size", 7)
+	header.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	header.add_theme_color_override("font_color", tone_color)
 	header.clip_text = true
 	header.text_overrun_behavior = 3
@@ -225,7 +220,7 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 		detail_parts.append(monitor)
 	var detail := Label.new()
 	detail.text = " ".join(detail_parts)
-	detail.add_theme_font_size_override("font_size", 7)
+	detail.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	detail.add_theme_color_override("font_color", DIM_COLOR)
 	detail.clip_text = true
 	detail.text_overrun_behavior = 3
@@ -234,44 +229,14 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 	return {"panel": cell, "style": style}
 
 func _build_ui() -> void:
-	var shade := ColorRect.new()
-	shade.name = "Shade"
-	shade.color = Color(0.027451, 0.039216, 0.07451, 0.901961)
-	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(shade)
-
-	_panel = PanelContainer.new()
-	_panel.position = Vector2(40, 30)
-	_panel.custom_minimum_size = Vector2(240, 110)
-	add_child(_panel)
-
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 8)
-	margin.add_theme_constant_override("margin_top", 6)
-	margin.add_theme_constant_override("margin_right", 8)
-	margin.add_theme_constant_override("margin_bottom", 6)
-	_panel.add_child(margin)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	margin.add_child(box)
-
-	_title = Label.new()
+	_shell = Shell.new(self, Tokens.MAP_POSITION, Tokens.MAP_MINIMUM, 6, false)
+	_panel = _shell.panel
+	_title = _shell.title
 	_title.text = "WORKSPACES // WAITING"
-	_title.add_theme_font_size_override("font_size", 8)
-	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
-	box.add_child(_title)
-
 	_grid = GridContainer.new()
 	_grid.columns = COLUMNS
 	_grid.add_theme_constant_override("h_separation", 3)
 	_grid.add_theme_constant_override("v_separation", 3)
-	box.add_child(_grid)
-
-	_hint = Label.new()
-	_hint.text = "ARROWS SELECT  TAB CLOSE"
-	_hint.add_theme_font_size_override("font_size", 7)
-	_hint.add_theme_color_override("font_color", DIM_COLOR)
-	box.add_child(_hint)
-
+	_shell.box.add_child(_grid)
+	_hint = _shell.finish("ARROWS SELECT  TAB CLOSE")
 	_refresh_grid()

@@ -1,5 +1,7 @@
 extends Node2D
 
+const Actions = preload("res://scripts/input_actions.gd")
+const Overlay = preload("res://ui/overlay_coordinator.gd")
 const SessionBinding = preload("res://scripts/session_binding.gd")
 
 @onready var player: CharacterBody2D = $World/Player
@@ -9,13 +11,25 @@ const SessionBinding = preload("res://scripts/session_binding.gd")
 @onready var notification_feed: CanvasLayer = $NotificationFeed
 @onready var media_console: CanvasLayer = $MediaConsole
 
-var menu_open := false
-var map_open := false
-var feed_open := false
-var media_open := false
+var overlays: RefCounted
+# Read-only compatibility views; the coordinator is the only state owner.
+var menu_open: bool:
+	get: return overlays.current == Overlay.Mode.PAUSE
+var map_open: bool:
+	get: return overlays.current == Overlay.Mode.WORKSPACES
+var feed_open: bool:
+	get: return overlays.current == Overlay.Mode.NOTIFICATIONS
+var media_open: bool:
+	get: return overlays.current == Overlay.Mode.MEDIA
 var _stations: Array[Node] = []
 
 func _ready() -> void:
+	Actions.ensure_registered()
+	overlays = Overlay.new(player, hud, {
+		Overlay.Mode.WORKSPACES: workspace_map,
+		Overlay.Mode.NOTIFICATIONS: notification_feed,
+		Overlay.Mode.MEDIA: media_console,
+	})
 	player.interaction_changed.connect(hud.set_interaction_prompt)
 	player.interaction_requested.connect(_on_interaction_requested)
 	player.menu_requested.connect(_toggle_menu)
@@ -52,53 +66,45 @@ func _ready() -> void:
 		_on_applications_changed(backend.applications)
 	hud.set_status("VELORA // POCKET TERMINAL")
 
+func _input(event: InputEvent) -> void:
+	if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):
+		get_viewport().set_input_as_handled()
+		_toggle_menu()
+
 func _unhandled_input(event: InputEvent) -> void:
-	if menu_open or map_open or feed_open or media_open or not event is InputEventKey:
+	if overlays.current != Overlay.Mode.NONE:
 		return
-	if not event.pressed or event.echo:
-		return
-	if event.keycode in [KEY_TAB, KEY_M]:
+	if Actions.pressed(event, "workspace_map"):
 		get_viewport().set_input_as_handled()
 		_toggle_workspace_map()
-	elif event.keycode == KEY_N:
+	elif Actions.pressed(event, "notification_feed"):
 		get_viewport().set_input_as_handled()
 		_toggle_notification_feed()
-	elif event.keycode == KEY_P:
+	elif Actions.pressed(event, "media_console"):
 		get_viewport().set_input_as_handled()
 		_toggle_media_console()
 
 func _toggle_workspace_map() -> void:
-	map_open = true
-	player.set_input_enabled(false)
-	workspace_map.open()
+	overlays.toggle(Overlay.Mode.WORKSPACES)
 
 func _on_map_closed() -> void:
-	map_open = false
-	player.set_input_enabled(true)
+	overlays.close(Overlay.Mode.WORKSPACES)
 
 func _toggle_notification_feed() -> void:
-	feed_open = true
-	player.set_input_enabled(false)
-	# Scene-driven refresh: the client fetches once per connection, so the
-	# panel asks for a fresh single-flight feed whenever it is inspected.
-	backend.request_notifications()
-	notification_feed.open()
+	if not feed_open:
+		backend.request_notifications()
+	overlays.toggle(Overlay.Mode.NOTIFICATIONS)
 
 func _on_feed_closed() -> void:
-	feed_open = false
-	player.set_input_enabled(true)
+	overlays.close(Overlay.Mode.NOTIFICATIONS)
 
 func _toggle_media_console() -> void:
-	media_open = true
-	player.set_input_enabled(false)
-	# Scene-driven refresh: the client fetches once per connection, so the
-	# console asks for a fresh single-flight snapshot whenever it is opened.
-	backend.request_media_snapshot()
-	media_console.open()
+	if not media_open:
+		backend.request_media_snapshot()
+	overlays.toggle(Overlay.Mode.MEDIA)
 
 func _on_media_console_closed() -> void:
-	media_open = false
-	player.set_input_enabled(true)
+	overlays.close(Overlay.Mode.MEDIA)
 
 func _on_session_snapshot_changed(snapshot: Dictionary) -> void:
 	workspace_map.update_session(snapshot)
@@ -199,6 +205,7 @@ func _on_applications_changed(applications: Array) -> void:
 			station.bind_application(applications_by_id.get(station.desktop_id, {}))
 
 func _toggle_menu() -> void:
-	menu_open = not menu_open
-	player.set_input_enabled(not menu_open)
-	hud.set_menu_visible(menu_open)
+	if overlays.current != Overlay.Mode.NONE:
+		overlays.back()
+	else:
+		overlays.open(Overlay.Mode.PAUSE)

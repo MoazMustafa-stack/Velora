@@ -1,5 +1,10 @@
 extends CanvasLayer
 
+const Actions = preload("res://scripts/input_actions.gd")
+const Shell = preload("res://ui/panel_shell.gd")
+const Cursor = preload("res://ui/list_cursor.gd")
+const Tokens = preload("res://ui/design_tokens.gd")
+
 signal control_requested(player_handle: String, verb: String)
 signal console_closed
 
@@ -15,15 +20,11 @@ signal console_closed
 # no animated transitions, so the panel writes nothing to disk and the
 # reduced-motion guarantee holds by construction.
 
-const TONE_COLORS := {
-	"ready": Color("9af4e7"),
-	"waiting": Color("f5b943"),
-	"failure": Color("e05a67"),
-}
-const TEXT_COLOR := Color("dce4f0")
-const DIM_COLOR := Color("586a80")
-const ROW_BG := Color("0c1c33")
-const ROW_BG_SELECTED := Color("16324f")
+const TONE_COLORS := Tokens.TONES
+const TEXT_COLOR := Tokens.TEXT
+const DIM_COLOR := Tokens.MUTED
+const ROW_BG := Tokens.SURFACE
+const ROW_BG_SELECTED := Tokens.SELECTED
 # Status never relies on color alone: every level renders a distinct marker
 # glyph plus its spelled name, and color is only a secondary channel. An
 # unrecognized status is labelled UNKNOWN instead of being guessed.
@@ -38,9 +39,9 @@ const STATUS_LABELS := {
 	"stopped": "STOP",
 }
 const STATUS_COLORS := {
-	"playing": Color("9af4e7"),
-	"paused": Color("f5b943"),
-	"stopped": Color("586a80"),
+	"playing": Tokens.READY,
+	"paused": Tokens.WAITING,
+	"stopped": Tokens.MUTED,
 }
 const VERB_LABELS := {
 	"play": "PLAY",
@@ -64,8 +65,12 @@ const MAX_VISIBLE_PLAYERS := 3
 const MAX_TRACKED_PLAYERS := 16
 
 var players: Array[Dictionary] = []
-var selected_index := -1
-var scroll_offset := 0
+var _cursor := Cursor.new(MAX_VISIBLE_PLAYERS)
+var selected_index: int:
+	get: return _cursor.selected
+var scroll_offset: int:
+	get: return _cursor.offset
+var _shell: RefCounted
 var availability := "waiting"
 var active_handle := ""
 
@@ -78,57 +83,52 @@ var _hint: Label
 var _rows: Array[Dictionary] = []
 
 func _ready() -> void:
+	Actions.ensure_registered()
 	visible = false
 	_build_ui()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_ESCAPE, KEY_P:
-				get_viewport().set_input_as_handled()
-				close()
-			KEY_UP, KEY_W:
-				get_viewport().set_input_as_handled()
-				_move_selection(-1)
-			KEY_DOWN, KEY_S:
-				get_viewport().set_input_as_handled()
-				_move_selection(1)
-			KEY_PAGEUP:
-				get_viewport().set_input_as_handled()
-				_move_selection(-MAX_VISIBLE_PLAYERS)
-			KEY_PAGEDOWN:
-				get_viewport().set_input_as_handled()
-				_move_selection(MAX_VISIBLE_PLAYERS)
-			KEY_HOME:
-				get_viewport().set_input_as_handled()
-				_select_index(0)
-			KEY_END:
-				get_viewport().set_input_as_handled()
-				_select_index(players.size() - 1)
-			KEY_SPACE, KEY_E, KEY_ENTER, KEY_KP_ENTER:
-				get_viewport().set_input_as_handled()
-				_request_toggle()
-			KEY_N, KEY_RIGHT, KEY_D:
-				get_viewport().set_input_as_handled()
-				_request_verb("next")
-			KEY_B, KEY_LEFT, KEY_A:
-				get_viewport().set_input_as_handled()
-				_request_verb("previous")
-			KEY_X:
-				get_viewport().set_input_as_handled()
-				_request_verb("stop")
-			# All six allowlisted verbs are keyboard reachable. Standalone
-			# Play and Pause ride the numpad play/pause glyphs, which the
-			# world menu already uses for its numeric shortcuts, while
-			# the primary keys resolve the same verbs from capability.
-			KEY_KP_0:
-				get_viewport().set_input_as_handled()
-				_request_verb("play")
-			KEY_KP_2:
-				get_viewport().set_input_as_handled()
-				_request_verb("pause")
+	if Actions.pressed(event, "back") or Actions.pressed(event, "media_console"):
+		get_viewport().set_input_as_handled()
+		close()
+	elif Actions.pressed(event, "nav_up"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-1)
+	elif Actions.pressed(event, "nav_down"):
+		get_viewport().set_input_as_handled()
+		_move_selection(1)
+	elif Actions.pressed(event, "page_up"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-MAX_VISIBLE_PLAYERS)
+	elif Actions.pressed(event, "page_down"):
+		get_viewport().set_input_as_handled()
+		_move_selection(MAX_VISIBLE_PLAYERS)
+	elif Actions.pressed(event, "first"):
+		get_viewport().set_input_as_handled()
+		_select_index(0)
+	elif Actions.pressed(event, "last"):
+		get_viewport().set_input_as_handled()
+		_select_index(players.size() - 1)
+	elif Actions.pressed(event, "media_toggle"):
+		get_viewport().set_input_as_handled()
+		_request_toggle()
+	elif Actions.pressed(event, "media_next"):
+		get_viewport().set_input_as_handled()
+		_request_verb("next")
+	elif Actions.pressed(event, "media_previous"):
+		get_viewport().set_input_as_handled()
+		_request_verb("previous")
+	elif Actions.pressed(event, "media_stop"):
+		get_viewport().set_input_as_handled()
+		_request_verb("stop")
+	elif Actions.pressed(event, "media_play"):
+		get_viewport().set_input_as_handled()
+		_request_verb("play")
+	elif Actions.pressed(event, "media_pause"):
+		get_viewport().set_input_as_handled()
+		_request_verb("pause")
 
 func open() -> void:
 	visible = true
@@ -138,12 +138,6 @@ func open() -> void:
 func close() -> void:
 	visible = false
 	console_closed.emit()
-
-func toggle() -> void:
-	if visible:
-		close()
-	else:
-		open()
 
 func set_availability(next_availability: String) -> void:
 	availability = next_availability
@@ -219,37 +213,15 @@ func _selected_player() -> Dictionary:
 	return {}
 
 func _preserve_selection(handle: String) -> void:
-	if not handle.is_empty():
-		for index in range(players.size()):
-			if String(players[index].get("handle", "")) == handle:
-				_select_index(index)
-				return
-	_select_index(_default_selection())
+	_cursor.preserve(players.map(func(player: Dictionary): return player["handle"]), handle, _default_selection())
+	_refresh_rows()
 
 func _move_selection(step: int) -> void:
-	if players.is_empty():
-		return
-	if selected_index < 0:
-		_select_index(0)
-		return
-	var count := players.size()
-	var next_index := selected_index + step
-	while next_index < 0:
-		next_index += count
-	_select_index(next_index % count)
+	_cursor.move(step, players.size())
+	_refresh_rows()
 
 func _select_index(index: int) -> void:
-	if players.is_empty():
-		selected_index = -1
-		scroll_offset = 0
-		_refresh_rows()
-		return
-	selected_index = clampi(index, 0, players.size() - 1)
-	if selected_index < scroll_offset:
-		scroll_offset = selected_index
-	elif selected_index >= scroll_offset + MAX_VISIBLE_PLAYERS:
-		scroll_offset = selected_index - MAX_VISIBLE_PLAYERS + 1
-	scroll_offset = clampi(scroll_offset, 0, maxi(0, players.size() - MAX_VISIBLE_PLAYERS))
+	_cursor.select(index, players.size())
 	_refresh_rows()
 
 func _refresh_title() -> void:
@@ -471,98 +443,16 @@ func _as_text(value: Variant, fallback: String) -> String:
 	return fallback
 
 func _build_ui() -> void:
-	var shade := ColorRect.new()
-	shade.name = "Shade"
-	shade.color = Color(0.027451, 0.039216, 0.07451, 0.901961)
-	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(shade)
-
-	_panel = PanelContainer.new()
-	_panel.position = Vector2(40, 24)
-	_panel.custom_minimum_size = Vector2(240, 0)
-	add_child(_panel)
-
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 8)
-	margin.add_theme_constant_override("margin_top", 5)
-	margin.add_theme_constant_override("margin_right", 8)
-	margin.add_theme_constant_override("margin_bottom", 5)
-	_panel.add_child(margin)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	margin.add_child(box)
-
-	var header := HBoxContainer.new()
-	box.add_child(header)
-
-	_title = Label.new()
+	_shell = Shell.new(self)
+	_panel = _shell.panel
+	_title = _shell.title
 	_title.text = "MEDIA // WAITING"
-	_title.add_theme_font_size_override("font_size", 8)
-	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
-	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_title.clip_text = true
-	_title.text_overrun_behavior = 3
-	header.add_child(_title)
-
-	_counter = Label.new()
-	_counter.text = "0/0"
-	_counter.add_theme_font_size_override("font_size", 8)
-	_counter.add_theme_color_override("font_color", DIM_COLOR)
-	header.add_child(_counter)
-
+	_counter = _shell.counter
 	_rows_box = VBoxContainer.new()
-	_rows_box.add_theme_constant_override("separation", 2)
-	box.add_child(_rows_box)
-
-	# The row structure is fixed and every row keeps the same two clipped
-	# lines regardless of content, so snapshot bursts can never reflow the
-	# panel.
+	_rows_box.add_theme_constant_override("separation", Tokens.SPACE / 2)
+	_shell.box.add_child(_rows_box)
 	for _row_index in range(MAX_VISIBLE_PLAYERS):
-		_rows.append(_build_row())
-
-	_feedback = Label.new()
-	_feedback.text = ""
-	_feedback.add_theme_font_size_override("font_size", 7)
-	_feedback.add_theme_color_override("font_color", DIM_COLOR)
-	_feedback.clip_text = true
-	_feedback.text_overrun_behavior = 3
-	box.add_child(_feedback)
-
-	_hint = Label.new()
-	_hint.text = "P CLOSE"
-	_hint.add_theme_font_size_override("font_size", 7)
-	_hint.add_theme_color_override("font_color", DIM_COLOR)
-	_hint.clip_text = true
-	_hint.text_overrun_behavior = 3
-	box.add_child(_hint)
-
-func _build_row() -> Dictionary:
-	var row := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = ROW_BG
-	style.content_margin_left = 4
-	style.content_margin_right = 4
-	style.content_margin_top = 2
-	style.content_margin_bottom = 2
-	row.add_theme_stylebox_override("panel", style)
-	_rows_box.add_child(row)
-
-	var lines := VBoxContainer.new()
-	lines.add_theme_constant_override("separation", 0)
-	row.add_child(lines)
-
-	var summary := Label.new()
-	summary.add_theme_font_size_override("font_size", 7)
-	summary.clip_text = true
-	summary.text_overrun_behavior = 3
-	lines.add_child(summary)
-
-	var detail := Label.new()
-	detail.add_theme_font_size_override("font_size", 7)
-	detail.add_theme_color_override("font_color", DIM_COLOR)
-	detail.clip_text = true
-	detail.text_overrun_behavior = 3
-	lines.add_child(detail)
-
-	return {"panel": row, "style": style, "summary": summary, "detail": detail}
+		_rows.append(Shell.row(_rows_box))
+	_feedback = Shell.label()
+	_shell.box.add_child(_feedback)
+	_hint = _shell.finish("P CLOSE")

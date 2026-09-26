@@ -1,18 +1,20 @@
 class_name VeloraPixelArt
 extends RefCounted
 
-const TILE_SIZE := Vector2i(16, 16)
-const DEEP_NAVY := Color("0b1020")
-const FLOOR_BLUE := Color("17233b")
-const FLOOR_LIGHT := Color("1d2c49")
-const STEEL_BLUE := Color("293858")
-const STEEL_LIGHT := Color("41577c")
-const CYAN := Color("41d6c3")
-const CYAN_LIGHT := Color("9af4e7")
-const AMBER := Color("f5b942")
-const RED := Color("e05a67")
-const SOFT_WHITE := Color("dce6f2")
-const SHADOW := Color("070a13")
+const Tokens = preload("res://ui/design_tokens.gd")
+
+const TILE_SIZE := Tokens.TILE_SIZE
+const DEEP_NAVY := Tokens.WORLD_BACKGROUND
+const FLOOR_BLUE := Tokens.WORLD_FLOOR
+const FLOOR_LIGHT := Tokens.WORLD_FLOOR_LIGHT
+const STEEL_BLUE := Tokens.WORLD_STEEL
+const STEEL_LIGHT := Tokens.WORLD_STEEL_LIGHT
+const CYAN := Tokens.WORLD_ACCENT
+const CYAN_LIGHT := Tokens.READY
+const AMBER := Tokens.WORLD_AMBER
+const RED := Tokens.FAILURE
+const SOFT_WHITE := Tokens.WORLD_TEXT
+const SHADOW := Tokens.WORLD_SHADOW
 
 static func create_tileset() -> TileSet:
 	var image := Image.create_empty(64, 16, false, Image.FORMAT_RGBA8)
@@ -130,7 +132,7 @@ static func _draw_wall_tile(image: Image, origin: Vector2i) -> void:
 	image.fill_rect(Rect2i(origin, TILE_SIZE), DEEP_NAVY)
 	image.fill_rect(Rect2i(origin + Vector2i(1, 1), Vector2i(14, 14)), STEEL_BLUE)
 	image.fill_rect(Rect2i(origin + Vector2i(1, 1), Vector2i(14, 3)), STEEL_LIGHT)
-	image.fill_rect(Rect2i(origin + Vector2i(3, 7), Vector2i(10, 2)), Color("1d2c49"))
+	image.fill_rect(Rect2i(origin + Vector2i(3, 7), Vector2i(10, 2)), Tokens.WORLD_FLOOR_LIGHT)
 	image.set_pixelv(origin + Vector2i(3, 12), AMBER)
 
 static func _draw_threshold_tile(image: Image, origin: Vector2i) -> void:
