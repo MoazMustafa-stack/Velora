@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+const Shell = preload("res://ui/panel_shell.gd")
+const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
 
 signal control_requested(player_handle: String, verb: String)
@@ -62,8 +64,12 @@ const MAX_VISIBLE_PLAYERS := 3
 const MAX_TRACKED_PLAYERS := 16
 
 var players: Array[Dictionary] = []
-var selected_index := -1
-var scroll_offset := 0
+var _cursor := Cursor.new(MAX_VISIBLE_PLAYERS)
+var selected_index: int:
+	get: return _cursor.selected
+var scroll_offset: int:
+	get: return _cursor.offset
+var _shell: RefCounted
 var availability := "waiting"
 var active_handle := ""
 
@@ -136,12 +142,6 @@ func open() -> void:
 func close() -> void:
 	visible = false
 	console_closed.emit()
-
-func toggle() -> void:
-	if visible:
-		close()
-	else:
-		open()
 
 func set_availability(next_availability: String) -> void:
 	availability = next_availability
@@ -217,37 +217,15 @@ func _selected_player() -> Dictionary:
 	return {}
 
 func _preserve_selection(handle: String) -> void:
-	if not handle.is_empty():
-		for index in range(players.size()):
-			if String(players[index].get("handle", "")) == handle:
-				_select_index(index)
-				return
-	_select_index(_default_selection())
+	_cursor.preserve(players.map(func(player: Dictionary): return player["handle"]), handle, _default_selection())
+	_refresh_rows()
 
 func _move_selection(step: int) -> void:
-	if players.is_empty():
-		return
-	if selected_index < 0:
-		_select_index(0)
-		return
-	var count := players.size()
-	var next_index := selected_index + step
-	while next_index < 0:
-		next_index += count
-	_select_index(next_index % count)
+	_cursor.move(step, players.size())
+	_refresh_rows()
 
 func _select_index(index: int) -> void:
-	if players.is_empty():
-		selected_index = -1
-		scroll_offset = 0
-		_refresh_rows()
-		return
-	selected_index = clampi(index, 0, players.size() - 1)
-	if selected_index < scroll_offset:
-		scroll_offset = selected_index
-	elif selected_index >= scroll_offset + MAX_VISIBLE_PLAYERS:
-		scroll_offset = selected_index - MAX_VISIBLE_PLAYERS + 1
-	scroll_offset = clampi(scroll_offset, 0, maxi(0, players.size() - MAX_VISIBLE_PLAYERS))
+	_cursor.select(index, players.size())
 	_refresh_rows()
 
 func _refresh_title() -> void:
@@ -469,98 +447,16 @@ func _as_text(value: Variant, fallback: String) -> String:
 	return fallback
 
 func _build_ui() -> void:
-	var shade := ColorRect.new()
-	shade.name = "Shade"
-	shade.color = Tokens.SHADE
-	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(shade)
-
-	_panel = PanelContainer.new()
-	_panel.position = Tokens.PANEL_POSITION
-	_panel.custom_minimum_size = Vector2(Tokens.PANEL_WIDTH, 0)
-	add_child(_panel)
-
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 8)
-	margin.add_theme_constant_override("margin_top", 5)
-	margin.add_theme_constant_override("margin_right", 8)
-	margin.add_theme_constant_override("margin_bottom", 5)
-	_panel.add_child(margin)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	margin.add_child(box)
-
-	var header := HBoxContainer.new()
-	box.add_child(header)
-
-	_title = Label.new()
+	_shell = Shell.new(self)
+	_panel = _shell.panel
+	_title = _shell.title
 	_title.text = "MEDIA // WAITING"
-	_title.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
-	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
-	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_title.clip_text = true
-	_title.text_overrun_behavior = 3
-	header.add_child(_title)
-
-	_counter = Label.new()
-	_counter.text = "0/0"
-	_counter.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
-	_counter.add_theme_color_override("font_color", DIM_COLOR)
-	header.add_child(_counter)
-
+	_counter = _shell.counter
 	_rows_box = VBoxContainer.new()
-	_rows_box.add_theme_constant_override("separation", 2)
-	box.add_child(_rows_box)
-
-	# The row structure is fixed and every row keeps the same two clipped
-	# lines regardless of content, so snapshot bursts can never reflow the
-	# panel.
+	_rows_box.add_theme_constant_override("separation", Tokens.SPACE / 2)
+	_shell.box.add_child(_rows_box)
 	for _row_index in range(MAX_VISIBLE_PLAYERS):
-		_rows.append(_build_row())
-
-	_feedback = Label.new()
-	_feedback.text = ""
-	_feedback.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-	_feedback.add_theme_color_override("font_color", DIM_COLOR)
-	_feedback.clip_text = true
-	_feedback.text_overrun_behavior = 3
-	box.add_child(_feedback)
-
-	_hint = Label.new()
-	_hint.text = "P CLOSE"
-	_hint.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-	_hint.add_theme_color_override("font_color", DIM_COLOR)
-	_hint.clip_text = true
-	_hint.text_overrun_behavior = 3
-	box.add_child(_hint)
-
-func _build_row() -> Dictionary:
-	var row := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = ROW_BG
-	style.content_margin_left = 4
-	style.content_margin_right = 4
-	style.content_margin_top = 2
-	style.content_margin_bottom = 2
-	row.add_theme_stylebox_override("panel", style)
-	_rows_box.add_child(row)
-
-	var lines := VBoxContainer.new()
-	lines.add_theme_constant_override("separation", 0)
-	row.add_child(lines)
-
-	var summary := Label.new()
-	summary.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-	summary.clip_text = true
-	summary.text_overrun_behavior = 3
-	lines.add_child(summary)
-
-	var detail := Label.new()
-	detail.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-	detail.add_theme_color_override("font_color", DIM_COLOR)
-	detail.clip_text = true
-	detail.text_overrun_behavior = 3
-	lines.add_child(detail)
-
-	return {"panel": row, "style": style, "summary": summary, "detail": detail}
+		_rows.append(Shell.row(_rows_box))
+	_feedback = Shell.label()
+	_shell.box.add_child(_feedback)
+	_hint = _shell.finish("P CLOSE")
