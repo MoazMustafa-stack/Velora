@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+const Tokens = preload("res://ui/design_tokens.gd")
+
 signal feed_closed
 
 # P5.10 notification feed panel.
@@ -11,14 +13,10 @@ signal feed_closed
 # applied instantly with no animated transitions, so the panel writes
 # nothing to disk and the reduced-motion guarantee holds by construction.
 
-const TONE_COLORS := {
-	"ready": Color("9af4e7"),
-	"waiting": Color("f5b943"),
-	"failure": Color("e05a67"),
-}
-const DIM_COLOR := Color("586a80")
-const ROW_BG := Color("0c1c33")
-const ROW_BG_SELECTED := Color("16324f")
+const TONE_COLORS := Tokens.TONES
+const DIM_COLOR := Tokens.MUTED
+const ROW_BG := Tokens.SURFACE
+const ROW_BG_SELECTED := Tokens.SELECTED
 # Urgency never relies on color alone: every level renders a distinct marker
 # glyph plus its spelled name, and color is only a secondary channel.
 const URGENCY_MARKERS := {
@@ -32,9 +30,9 @@ const URGENCY_LABELS := {
 	"low": "LOW",
 }
 const URGENCY_COLORS := {
-	"critical": Color("e05a67"),
-	"normal": Color("dce4f0"),
-	"low": Color("586a80"),
+	"critical": Tokens.FAILURE,
+	"normal": Tokens.TEXT,
+	"low": Tokens.MUTED,
 }
 const FALLBACK_URGENCY := "normal"
 const MAX_VISIBLE_ENTRIES := 4
@@ -257,13 +255,13 @@ func _refresh_counter() -> void:
 func _build_ui() -> void:
 	var shade := ColorRect.new()
 	shade.name = "Shade"
-	shade.color = Color(0.027451, 0.039216, 0.07451, 0.901961)
+	shade.color = Tokens.SHADE
 	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(shade)
 
 	_panel = PanelContainer.new()
-	_panel.position = Vector2(40, 24)
-	_panel.custom_minimum_size = Vector2(240, 0)
+	_panel.position = Tokens.PANEL_POSITION
+	_panel.custom_minimum_size = Vector2(Tokens.PANEL_WIDTH, 0)
 	add_child(_panel)
 
 	var margin := MarginContainer.new()
@@ -282,7 +280,7 @@ func _build_ui() -> void:
 
 	_title = Label.new()
 	_title.text = "NOTIFICATIONS // WAITING"
-	_title.add_theme_font_size_override("font_size", 8)
+	_title.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
 	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_title.clip_text = true
@@ -291,7 +289,7 @@ func _build_ui() -> void:
 
 	_counter = Label.new()
 	_counter.text = "0/0"
-	_counter.add_theme_font_size_override("font_size", 8)
+	_counter.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
 	_counter.add_theme_color_override("font_color", DIM_COLOR)
 	header.add_child(_counter)
 
@@ -306,7 +304,7 @@ func _build_ui() -> void:
 
 	_hint = Label.new()
 	_hint.text = "ARROWS SCROLL  N CLOSE"
-	_hint.add_theme_font_size_override("font_size", 7)
+	_hint.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	_hint.add_theme_color_override("font_color", DIM_COLOR)
 	box.add_child(_hint)
 
@@ -326,13 +324,13 @@ func _build_row() -> Dictionary:
 	row.add_child(lines)
 
 	var summary := Label.new()
-	summary.add_theme_font_size_override("font_size", 7)
+	summary.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	summary.clip_text = true
 	summary.text_overrun_behavior = 3
 	lines.add_child(summary)
 
 	var detail := Label.new()
-	detail.add_theme_font_size_override("font_size", 7)
+	detail.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	detail.add_theme_color_override("font_color", DIM_COLOR)
 	detail.clip_text = true
 	detail.text_overrun_behavior = 3

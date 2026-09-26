@@ -1,18 +1,16 @@
 extends CanvasLayer
 
+const Tokens = preload("res://ui/design_tokens.gd")
+
 signal switch_requested(workspace_handle: String)
 signal map_closed
 
-const TONE_COLORS := {
-	"ready": Color("9af4e7"),
-	"waiting": Color("f5b943"),
-	"failure": Color("e05a67"),
-}
-const TEXT_COLOR := Color("dce4f0")
-const DIM_COLOR := Color("586a80")
-const PANEL_BG := Color("071226")
-const CELL_BG := Color("0c1c33")
-const CELL_BG_SELECTED := Color("16324f")
+const TONE_COLORS := Tokens.TONES
+const TEXT_COLOR := Tokens.TEXT
+const DIM_COLOR := Tokens.MUTED
+const PANEL_BG := Tokens.PANEL
+const CELL_BG := Tokens.SURFACE
+const CELL_BG_SELECTED := Tokens.SELECTED
 const COLUMNS := 5
 const MAX_VISIBLE_WORKSPACES := 20
 
@@ -160,7 +158,7 @@ func _refresh_grid() -> void:
 	if visible_workspaces.is_empty():
 		var empty_label := Label.new()
 		empty_label.text = "NO SESSION DATA"
-		empty_label.add_theme_font_size_override("font_size", 7)
+		empty_label.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 		empty_label.add_theme_color_override("font_color", DIM_COLOR)
 		_grid.add_child(empty_label)
 		return
@@ -212,7 +210,7 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 
 	var header := Label.new()
 	header.text = "%s%s" % [marker, display_name]
-	header.add_theme_font_size_override("font_size", 7)
+	header.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	header.add_theme_color_override("font_color", tone_color)
 	header.clip_text = true
 	header.text_overrun_behavior = 3
@@ -225,7 +223,7 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 		detail_parts.append(monitor)
 	var detail := Label.new()
 	detail.text = " ".join(detail_parts)
-	detail.add_theme_font_size_override("font_size", 7)
+	detail.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	detail.add_theme_color_override("font_color", DIM_COLOR)
 	detail.clip_text = true
 	detail.text_overrun_behavior = 3
@@ -236,13 +234,13 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 func _build_ui() -> void:
 	var shade := ColorRect.new()
 	shade.name = "Shade"
-	shade.color = Color(0.027451, 0.039216, 0.07451, 0.901961)
+	shade.color = Tokens.SHADE
 	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(shade)
 
 	_panel = PanelContainer.new()
-	_panel.position = Vector2(40, 30)
-	_panel.custom_minimum_size = Vector2(240, 110)
+	_panel.position = Tokens.MAP_POSITION
+	_panel.custom_minimum_size = Tokens.MAP_MINIMUM
 	add_child(_panel)
 
 	var margin := MarginContainer.new()
@@ -258,7 +256,7 @@ func _build_ui() -> void:
 
 	_title = Label.new()
 	_title.text = "WORKSPACES // WAITING"
-	_title.add_theme_font_size_override("font_size", 8)
+	_title.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
 	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
 	box.add_child(_title)
 
@@ -270,7 +268,7 @@ func _build_ui() -> void:
 
 	_hint = Label.new()
 	_hint.text = "ARROWS SELECT  TAB CLOSE"
-	_hint.add_theme_font_size_override("font_size", 7)
+	_hint.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	_hint.add_theme_color_override("font_color", DIM_COLOR)
 	box.add_child(_hint)
 

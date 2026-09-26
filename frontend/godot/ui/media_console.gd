@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+const Tokens = preload("res://ui/design_tokens.gd")
+
 signal control_requested(player_handle: String, verb: String)
 signal console_closed
 
@@ -15,15 +17,11 @@ signal console_closed
 # no animated transitions, so the panel writes nothing to disk and the
 # reduced-motion guarantee holds by construction.
 
-const TONE_COLORS := {
-	"ready": Color("9af4e7"),
-	"waiting": Color("f5b943"),
-	"failure": Color("e05a67"),
-}
-const TEXT_COLOR := Color("dce4f0")
-const DIM_COLOR := Color("586a80")
-const ROW_BG := Color("0c1c33")
-const ROW_BG_SELECTED := Color("16324f")
+const TONE_COLORS := Tokens.TONES
+const TEXT_COLOR := Tokens.TEXT
+const DIM_COLOR := Tokens.MUTED
+const ROW_BG := Tokens.SURFACE
+const ROW_BG_SELECTED := Tokens.SELECTED
 # Status never relies on color alone: every level renders a distinct marker
 # glyph plus its spelled name, and color is only a secondary channel. An
 # unrecognized status is labelled UNKNOWN instead of being guessed.
@@ -38,9 +36,9 @@ const STATUS_LABELS := {
 	"stopped": "STOP",
 }
 const STATUS_COLORS := {
-	"playing": Color("9af4e7"),
-	"paused": Color("f5b943"),
-	"stopped": Color("586a80"),
+	"playing": Tokens.READY,
+	"paused": Tokens.WAITING,
+	"stopped": Tokens.MUTED,
 }
 const VERB_LABELS := {
 	"play": "PLAY",
@@ -473,13 +471,13 @@ func _as_text(value: Variant, fallback: String) -> String:
 func _build_ui() -> void:
 	var shade := ColorRect.new()
 	shade.name = "Shade"
-	shade.color = Color(0.027451, 0.039216, 0.07451, 0.901961)
+	shade.color = Tokens.SHADE
 	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(shade)
 
 	_panel = PanelContainer.new()
-	_panel.position = Vector2(40, 24)
-	_panel.custom_minimum_size = Vector2(240, 0)
+	_panel.position = Tokens.PANEL_POSITION
+	_panel.custom_minimum_size = Vector2(Tokens.PANEL_WIDTH, 0)
 	add_child(_panel)
 
 	var margin := MarginContainer.new()
@@ -498,7 +496,7 @@ func _build_ui() -> void:
 
 	_title = Label.new()
 	_title.text = "MEDIA // WAITING"
-	_title.add_theme_font_size_override("font_size", 8)
+	_title.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
 	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_title.clip_text = true
@@ -507,7 +505,7 @@ func _build_ui() -> void:
 
 	_counter = Label.new()
 	_counter.text = "0/0"
-	_counter.add_theme_font_size_override("font_size", 8)
+	_counter.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
 	_counter.add_theme_color_override("font_color", DIM_COLOR)
 	header.add_child(_counter)
 
@@ -523,7 +521,7 @@ func _build_ui() -> void:
 
 	_feedback = Label.new()
 	_feedback.text = ""
-	_feedback.add_theme_font_size_override("font_size", 7)
+	_feedback.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	_feedback.add_theme_color_override("font_color", DIM_COLOR)
 	_feedback.clip_text = true
 	_feedback.text_overrun_behavior = 3
@@ -531,7 +529,7 @@ func _build_ui() -> void:
 
 	_hint = Label.new()
 	_hint.text = "P CLOSE"
-	_hint.add_theme_font_size_override("font_size", 7)
+	_hint.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	_hint.add_theme_color_override("font_color", DIM_COLOR)
 	_hint.clip_text = true
 	_hint.text_overrun_behavior = 3
@@ -553,13 +551,13 @@ func _build_row() -> Dictionary:
 	row.add_child(lines)
 
 	var summary := Label.new()
-	summary.add_theme_font_size_override("font_size", 7)
+	summary.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	summary.clip_text = true
 	summary.text_overrun_behavior = 3
 	lines.add_child(summary)
 
 	var detail := Label.new()
-	detail.add_theme_font_size_override("font_size", 7)
+	detail.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	detail.add_theme_color_override("font_color", DIM_COLOR)
 	detail.clip_text = true
 	detail.text_overrun_behavior = 3
