@@ -127,6 +127,14 @@ func _run() -> void:
 	await process_frame
 	_check(map._panel.position.x + map._panel.size.x <= 320, "D6.02 grid stays within the canvas")
 	_check(map._cells[0].panel.size.x >= 40, "D6.02 clipped cells retain readable width")
+	var crowded: Array = []
+	for index in range(20):
+		crowded.append({"handle": "crowded-%d" % index, "index": index,
+			"name": "A long workspace name", "monitor": "A long monitor name", "window_count": 99})
+	map.update_session({"workspaces": crowded})
+	await process_frame
+	await process_frame
+	_check(map._panel.position.y + map._panel.size.y <= 180, "D6.02 all 20 cells and the footer fit vertically")
 
 	map.close()
 	_check(not map.visible, "P3.07 close() hides the map again")

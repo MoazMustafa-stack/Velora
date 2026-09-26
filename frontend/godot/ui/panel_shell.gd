@@ -37,6 +37,9 @@ func _init(parent: CanvasLayer, position: Vector2 = Tokens.PANEL_POSITION,
 		title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		header.add_child(title)
 		counter = label("0/0", Tokens.FONT_TITLE)
+		# Clipped labels otherwise have zero minimum width beside an expanding title.
+		counter.custom_minimum_size.x = 24
+		counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		header.add_child(counter)
 	else:
 		box.add_child(title)

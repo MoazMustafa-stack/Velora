@@ -197,8 +197,8 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 	style.bg_color = CELL_BG_SELECTED if index == selected_index else CELL_BG
 	style.content_margin_left = 4
 	style.content_margin_right = 4
-	style.content_margin_top = 2
-	style.content_margin_bottom = 2
+	style.content_margin_top = 1
+	style.content_margin_bottom = 1
 	cell.add_theme_stylebox_override("panel", style)
 
 	var box := VBoxContainer.new()

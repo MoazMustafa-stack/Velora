@@ -32,6 +32,7 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	assert(shell.panel.position.x + shell.panel.size.x <= 320)
+	assert(shell.counter.size.x >= 24)
 	assert(row.summary.clip_text and row.detail.clip_text and shell.hint.clip_text)
 	layer.queue_free()
 	await process_frame
