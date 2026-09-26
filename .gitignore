@@ -38,6 +38,9 @@
 *.swo
 *~
 
+# Local opencode agent configuration
+/.opencode/
+
 # Operating-system metadata
 .DS_Store
 Thumbs.db

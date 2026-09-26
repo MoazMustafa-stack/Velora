@@ -20,6 +20,8 @@ export XDG_DATA_DIRS="$test_dir/system-data"
 export XDG_CONFIG_HOME="$test_dir/config"
 export XDG_CACHE_HOME="$test_dir/cache"
 export VELORA_SOCKET="$XDG_RUNTIME_DIR/velora.sock"
+export VELORA_MEDIA_ENABLED=false
+export VELORA_NOTIFICATIONS_ENABLED=false
 mkdir -p "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME" "$XDG_DATA_DIRS" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
 chmod 700 "$XDG_RUNTIME_DIR"
 

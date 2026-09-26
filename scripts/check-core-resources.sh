@@ -32,6 +32,8 @@ echo "Building Core (release profile for representative idle cost)..."
 XDG_RUNTIME_DIR="$runtime_dir" \
 HYPRLAND_INSTANCE_SIGNATURE= \
 VELORA_SOCKET="$socket_path" \
+VELORA_MEDIA_ENABLED=false \
+VELORA_NOTIFICATIONS_ENABLED=false \
   "$repo_dir/target/release/velora-core" &
 core_pid=$!
 

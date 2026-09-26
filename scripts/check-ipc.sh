@@ -27,6 +27,8 @@ export XDG_DATA_DIRS="$test_dir/system-data"
 export XDG_CONFIG_HOME="$test_dir/config"
 export XDG_CACHE_HOME="$test_dir/cache"
 export VELORA_IPC_TEST_DIR="$test_dir"
+export VELORA_MEDIA_ENABLED=false
+export VELORA_NOTIFICATIONS_ENABLED=false
 mkdir -p \
   "$XDG_RUNTIME_DIR" \
   "$XDG_DATA_HOME/applications" \
