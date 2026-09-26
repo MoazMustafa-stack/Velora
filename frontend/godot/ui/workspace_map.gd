@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+const Shell = preload("res://ui/panel_shell.gd")
+const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
 
 signal switch_requested(workspace_handle: String)
@@ -8,14 +10,16 @@ signal map_closed
 const TONE_COLORS := Tokens.TONES
 const TEXT_COLOR := Tokens.TEXT
 const DIM_COLOR := Tokens.MUTED
-const PANEL_BG := Tokens.PANEL
 const CELL_BG := Tokens.SURFACE
 const CELL_BG_SELECTED := Tokens.SELECTED
 const COLUMNS := 5
 const MAX_VISIBLE_WORKSPACES := 20
 
 var visible_workspaces: Array[Dictionary] = []
-var selected_index := -1
+var _cursor := Cursor.new(MAX_VISIBLE_WORKSPACES)
+var selected_index: int:
+	get: return _cursor.selected
+var _shell: RefCounted
 
 var _panel: PanelContainer
 var _title: Label
@@ -65,12 +69,6 @@ func close() -> void:
 	visible = false
 	map_closed.emit()
 
-func toggle() -> void:
-	if visible:
-		close()
-	else:
-		open()
-
 func set_availability(availability: String) -> void:
 	match availability:
 		"available":
@@ -80,19 +78,22 @@ func set_availability(availability: String) -> void:
 			_title.text = "WORKSPACES // NO HYPRLAND"
 			_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
 			visible_workspaces.clear()
-			selected_index = -1
+			_cursor.select(-1, 0)
 			_refresh_grid()
 		"incompatible":
 			_title.text = "WORKSPACES // INCOMPATIBLE"
 			_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
 			visible_workspaces.clear()
-			selected_index = -1
+			_cursor.select(-1, 0)
 			_refresh_grid()
 		_:
 			_title.text = "WORKSPACES // WAITING"
 			_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
 
 func update_session(snapshot: Dictionary) -> void:
+	var selected_handle := ""
+	if selected_index >= 0 and selected_index < visible_workspaces.size():
+		selected_handle = String(visible_workspaces[selected_index]["handle"])
 	var raw_workspaces = snapshot.get("workspaces", [])
 	if not raw_workspaces is Array:
 		return
@@ -109,7 +110,7 @@ func update_session(snapshot: Dictionary) -> void:
 	)
 	visible_workspaces = workspaces.slice(0, MAX_VISIBLE_WORKSPACES)
 	set_availability("available")
-	selected_index = _default_selection()
+	_cursor.preserve(visible_workspaces.map(func(workspace: Dictionary): return workspace["handle"]), selected_handle, _default_selection())
 	_refresh_grid()
 
 func _default_selection() -> int:
@@ -120,10 +121,10 @@ func _default_selection() -> int:
 
 func _select_index(index: int) -> void:
 	if visible_workspaces.is_empty():
-		selected_index = -1
+		_cursor.select(-1, 0)
 		return
 	var previous := selected_index
-	selected_index = clampi(index, 0, visible_workspaces.size() - 1)
+	_cursor.select(index, visible_workspaces.size())
 	if _cells.size() != visible_workspaces.size():
 		_refresh_grid()
 		return
@@ -131,16 +132,10 @@ func _select_index(index: int) -> void:
 	_set_cell_selected(selected_index, true)
 
 func _move_selection(step: int) -> void:
-	if visible_workspaces.is_empty():
-		return
-	if selected_index < 0:
-		_select_index(0)
-		return
-	var count := visible_workspaces.size()
-	var next := selected_index + step
-	while next < 0:
-		next += count
-	_select_index(next % count)
+	var previous := selected_index
+	_cursor.move(step, visible_workspaces.size())
+	_set_cell_selected(previous, false)
+	_set_cell_selected(selected_index, true)
 
 func _confirm_selection() -> void:
 	if selected_index < 0 or selected_index >= visible_workspaces.size():
@@ -196,6 +191,8 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 		tone_color = TONE_COLORS["waiting"]
 
 	var cell := PanelContainer.new()
+	# Explicit width keeps clipped text readable rather than collapsing cells.
+	cell.custom_minimum_size.x = floorf((Tokens.PANEL_WIDTH - 16 - 3 * (COLUMNS - 1)) / COLUMNS)
 	var style := StyleBoxFlat.new()
 	style.bg_color = CELL_BG_SELECTED if index == selected_index else CELL_BG
 	style.content_margin_left = 4
@@ -232,44 +229,14 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 	return {"panel": cell, "style": style}
 
 func _build_ui() -> void:
-	var shade := ColorRect.new()
-	shade.name = "Shade"
-	shade.color = Tokens.SHADE
-	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(shade)
-
-	_panel = PanelContainer.new()
-	_panel.position = Tokens.MAP_POSITION
-	_panel.custom_minimum_size = Tokens.MAP_MINIMUM
-	add_child(_panel)
-
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 8)
-	margin.add_theme_constant_override("margin_top", 6)
-	margin.add_theme_constant_override("margin_right", 8)
-	margin.add_theme_constant_override("margin_bottom", 6)
-	_panel.add_child(margin)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	margin.add_child(box)
-
-	_title = Label.new()
+	_shell = Shell.new(self, Tokens.MAP_POSITION, Tokens.MAP_MINIMUM, 6, false)
+	_panel = _shell.panel
+	_title = _shell.title
 	_title.text = "WORKSPACES // WAITING"
-	_title.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
-	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
-	box.add_child(_title)
-
 	_grid = GridContainer.new()
 	_grid.columns = COLUMNS
 	_grid.add_theme_constant_override("h_separation", 3)
 	_grid.add_theme_constant_override("v_separation", 3)
-	box.add_child(_grid)
-
-	_hint = Label.new()
-	_hint.text = "ARROWS SELECT  TAB CLOSE"
-	_hint.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-	_hint.add_theme_color_override("font_color", DIM_COLOR)
-	box.add_child(_hint)
-
+	_shell.box.add_child(_grid)
+	_hint = _shell.finish("ARROWS SELECT  TAB CLOSE")
 	_refresh_grid()

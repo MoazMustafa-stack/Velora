@@ -118,9 +118,15 @@ func _run() -> void:
 
 	map.update_session({"sequence": 2, "workspaces": fixture_workspaces.slice(0, 10)})
 	_check(
-		map._grid.get_child_count() == 10 and map.selected_index == 1,
-		"P3.07 refreshed sessions rebuild cells and reselect the active workspace"
+		map._grid.get_child_count() == 10 and map.selected_index == 0,
+		"D6.02 refreshed sessions preserve the selected workspace handle"
 	)
+	map.update_session({"workspaces": fixture_workspaces.slice(1, 10)})
+	_check(map.selected_index == 0, "D6.02 removed selection falls back to the active workspace")
+	await process_frame
+	await process_frame
+	_check(map._panel.position.x + map._panel.size.x <= 320, "D6.02 grid stays within the canvas")
+	_check(map._cells[0].panel.size.x >= 40, "D6.02 clipped cells retain readable width")
 
 	map.close()
 	_check(not map.visible, "P3.07 close() hides the map again")
