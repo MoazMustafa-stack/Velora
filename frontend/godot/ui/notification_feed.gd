@@ -1,5 +1,6 @@
 extends CanvasLayer
 
+const Actions = preload("res://scripts/input_actions.gd")
 const Shell = preload("res://ui/panel_shell.gd")
 const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
@@ -59,35 +60,34 @@ var _hint: Label
 var _rows: Array[Dictionary] = []
 
 func _ready() -> void:
+	Actions.ensure_registered()
 	visible = false
 	_build_ui()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_ESCAPE, KEY_N:
-				get_viewport().set_input_as_handled()
-				close()
-			KEY_UP, KEY_W:
-				get_viewport().set_input_as_handled()
-				_move_selection(-1)
-			KEY_DOWN, KEY_S:
-				get_viewport().set_input_as_handled()
-				_move_selection(1)
-			KEY_LEFT, KEY_A, KEY_PAGEUP:
-				get_viewport().set_input_as_handled()
-				_move_selection(-MAX_VISIBLE_ENTRIES)
-			KEY_RIGHT, KEY_D, KEY_PAGEDOWN:
-				get_viewport().set_input_as_handled()
-				_move_selection(MAX_VISIBLE_ENTRIES)
-			KEY_HOME:
-				get_viewport().set_input_as_handled()
-				_select_index(0)
-			KEY_END:
-				get_viewport().set_input_as_handled()
-				_select_index(entries.size() - 1)
+	if Actions.pressed(event, "back") or Actions.pressed(event, "notification_feed"):
+		get_viewport().set_input_as_handled()
+		close()
+	elif Actions.pressed(event, "nav_up"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-1)
+	elif Actions.pressed(event, "nav_down"):
+		get_viewport().set_input_as_handled()
+		_move_selection(1)
+	elif Actions.pressed(event, "page_up") or Actions.pressed(event, "nav_left"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-MAX_VISIBLE_ENTRIES)
+	elif Actions.pressed(event, "page_down") or Actions.pressed(event, "nav_right"):
+		get_viewport().set_input_as_handled()
+		_move_selection(MAX_VISIBLE_ENTRIES)
+	elif Actions.pressed(event, "first"):
+		get_viewport().set_input_as_handled()
+		_select_index(0)
+	elif Actions.pressed(event, "last"):
+		get_viewport().set_input_as_handled()
+		_select_index(entries.size() - 1)
 
 func open() -> void:
 	visible = true

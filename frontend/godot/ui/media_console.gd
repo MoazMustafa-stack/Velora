@@ -1,5 +1,6 @@
 extends CanvasLayer
 
+const Actions = preload("res://scripts/input_actions.gd")
 const Shell = preload("res://ui/panel_shell.gd")
 const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
@@ -82,57 +83,52 @@ var _hint: Label
 var _rows: Array[Dictionary] = []
 
 func _ready() -> void:
+	Actions.ensure_registered()
 	visible = false
 	_build_ui()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_ESCAPE, KEY_P:
-				get_viewport().set_input_as_handled()
-				close()
-			KEY_UP, KEY_W:
-				get_viewport().set_input_as_handled()
-				_move_selection(-1)
-			KEY_DOWN, KEY_S:
-				get_viewport().set_input_as_handled()
-				_move_selection(1)
-			KEY_PAGEUP:
-				get_viewport().set_input_as_handled()
-				_move_selection(-MAX_VISIBLE_PLAYERS)
-			KEY_PAGEDOWN:
-				get_viewport().set_input_as_handled()
-				_move_selection(MAX_VISIBLE_PLAYERS)
-			KEY_HOME:
-				get_viewport().set_input_as_handled()
-				_select_index(0)
-			KEY_END:
-				get_viewport().set_input_as_handled()
-				_select_index(players.size() - 1)
-			KEY_SPACE, KEY_E, KEY_ENTER, KEY_KP_ENTER:
-				get_viewport().set_input_as_handled()
-				_request_toggle()
-			KEY_N, KEY_RIGHT, KEY_D:
-				get_viewport().set_input_as_handled()
-				_request_verb("next")
-			KEY_B, KEY_LEFT, KEY_A:
-				get_viewport().set_input_as_handled()
-				_request_verb("previous")
-			KEY_X:
-				get_viewport().set_input_as_handled()
-				_request_verb("stop")
-			# All six allowlisted verbs are keyboard reachable. Standalone
-			# Play and Pause ride the numpad play/pause glyphs, which the
-			# world menu already uses for its numeric shortcuts, while
-			# the primary keys resolve the same verbs from capability.
-			KEY_KP_0:
-				get_viewport().set_input_as_handled()
-				_request_verb("play")
-			KEY_KP_2:
-				get_viewport().set_input_as_handled()
-				_request_verb("pause")
+	if Actions.pressed(event, "back") or Actions.pressed(event, "media_console"):
+		get_viewport().set_input_as_handled()
+		close()
+	elif Actions.pressed(event, "nav_up"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-1)
+	elif Actions.pressed(event, "nav_down"):
+		get_viewport().set_input_as_handled()
+		_move_selection(1)
+	elif Actions.pressed(event, "page_up"):
+		get_viewport().set_input_as_handled()
+		_move_selection(-MAX_VISIBLE_PLAYERS)
+	elif Actions.pressed(event, "page_down"):
+		get_viewport().set_input_as_handled()
+		_move_selection(MAX_VISIBLE_PLAYERS)
+	elif Actions.pressed(event, "first"):
+		get_viewport().set_input_as_handled()
+		_select_index(0)
+	elif Actions.pressed(event, "last"):
+		get_viewport().set_input_as_handled()
+		_select_index(players.size() - 1)
+	elif Actions.pressed(event, "media_toggle"):
+		get_viewport().set_input_as_handled()
+		_request_toggle()
+	elif Actions.pressed(event, "media_next"):
+		get_viewport().set_input_as_handled()
+		_request_verb("next")
+	elif Actions.pressed(event, "media_previous"):
+		get_viewport().set_input_as_handled()
+		_request_verb("previous")
+	elif Actions.pressed(event, "media_stop"):
+		get_viewport().set_input_as_handled()
+		_request_verb("stop")
+	elif Actions.pressed(event, "media_play"):
+		get_viewport().set_input_as_handled()
+		_request_verb("play")
+	elif Actions.pressed(event, "media_pause"):
+		get_viewport().set_input_as_handled()
+		_request_verb("pause")
 
 func open() -> void:
 	visible = true

@@ -32,13 +32,14 @@ func _run() -> void:
 	check(main.hud.menu_connection.text == "CONNECTED", "Backend state updates while paused")
 	main._toggle_menu()
 	check(main.hud.status.text == "VELORA // READY", "Pause preserves useful status")
-	main.player.global_position = Vector2(160, 96)
+	main.player.global_position = Vector2(160, 82)
 	main.player.facing = Vector2.UP
 	main.player._update_detector_position()
 	await physics_frame
 	await physics_frame
 	main.player.refresh_interaction()
 	var prompt: String = main.hud.prompt.text
+	check(not prompt.is_empty(), "Prompt recovery fixture has an actual station target")
 	main._toggle_menu()
 	check(not main.hud.prompt_panel.visible, "Modal hides world prompt")
 	main._toggle_menu()

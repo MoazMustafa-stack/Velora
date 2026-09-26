@@ -1,5 +1,6 @@
 extends CharacterBody2D
 
+const Actions = preload("res://scripts/input_actions.gd")
 const PixelArt = preload("res://scripts/pixel_art.gd")
 
 signal interaction_changed(prompt: String)
@@ -22,14 +23,14 @@ var _last_prompt := ""
 var _texture_cache: Dictionary = {}
 
 func _ready() -> void:
-	_register_controls()
+	Actions.ensure_registered()
 	_update_detector_position()
 	_update_sprite()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("menu"):
+	if Actions.pressed(event, "menu"):
 		menu_requested.emit()
-	elif input_enabled and event.is_action_pressed("interact") and active_interactable:
+	elif input_enabled and Actions.pressed(event, "interact") and active_interactable:
 		interaction_requested.emit(active_interactable)
 
 func _physics_process(delta: float) -> void:
@@ -118,22 +119,3 @@ func _update_interaction() -> void:
 	if prompt != _last_prompt:
 		_last_prompt = prompt
 		interaction_changed.emit(prompt)
-
-func _register_controls() -> void:
-	_ensure_action("move_up", [KEY_W, KEY_UP])
-	_ensure_action("move_down", [KEY_S, KEY_DOWN])
-	_ensure_action("move_left", [KEY_A, KEY_LEFT])
-	_ensure_action("move_right", [KEY_D, KEY_RIGHT])
-	_ensure_action("sprint", [KEY_SHIFT])
-	_ensure_action("interact", [KEY_E, KEY_ENTER])
-	_ensure_action("menu", [KEY_ESCAPE])
-
-func _ensure_action(action: StringName, keys: Array[int]) -> void:
-	if not InputMap.has_action(action):
-		InputMap.add_action(action)
-	if not InputMap.action_get_events(action).is_empty():
-		return
-	for keycode in keys:
-		var event := InputEventKey.new()
-		event.physical_keycode = keycode
-		InputMap.action_add_event(action, event)

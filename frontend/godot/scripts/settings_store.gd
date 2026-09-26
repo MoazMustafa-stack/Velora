@@ -6,7 +6,7 @@ extends RefCounted
 const VERSION := 1
 const DEFAULT_PATH := "user://velora-settings.json"
 const MAX_BYTES := 16384
-const MAX_BINDINGS := 3
+const MAX_BINDINGS := 4
 const ACTIONS := ["move_up", "move_down", "move_left", "move_right", "sprint",
 	"interact", "menu", "workspace_map", "notification_feed", "media_console",
 	"back", "confirm", "nav_up", "nav_down", "nav_left", "nav_right",

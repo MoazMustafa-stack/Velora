@@ -32,7 +32,7 @@ func _run() -> void:
 	check(settings.audio_volume() == 0.5, "Non-finite volume defaults")
 	check(settings.set_action_keys("interact", [KEY_E, KEY_ENTER]), "Allowlisted bindings")
 	check(not settings.set_action_keys("execute", [KEY_E]), "Unknown actions rejected")
-	for keys in [[], [KEY_E, KEY_E], [KEY_A, KEY_B, KEY_C, KEY_D], [1.5], ["E"], [-1]]:
+	for keys in [[], [KEY_E, KEY_E], [KEY_A, KEY_B, KEY_C, KEY_D, KEY_F], [1.5], ["E"], [-1]]:
 		check(not settings.set_action_keys("interact", keys), "Malformed bindings rejected")
 	check(settings.set_station_desktop_id("editor", "org.example.Editor.desktop"), "Desktop ID accepted")
 	for id in ["/usr/bin/app", "../app.desktop", "sh -c app.desktop", "a;id.desktop", "$HOME.desktop", "org.mpris.MediaPlayer2.foo", "x".repeat(256) + ".desktop"]:

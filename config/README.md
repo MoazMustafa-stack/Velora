@@ -11,7 +11,7 @@ The store owns `user://velora-settings.json` with schema version 1 and a
 Only explicit save/reset operations write, and reset removes only that file.
 
 Allowlisted preferences: onboarding completion, reduced motion, UI-audio mute
-and volume (0–1), up to three keyboard keys per named action, and fixed
+and volume (0–1), up to four keyboard keys per named action, and fixed
 editor/browser/terminal slots containing syntactically validated desktop IDs.
 Missing values use defaults; invalid files use all defaults; unknown fields
 are ignored and never written back. No live system data is stored.

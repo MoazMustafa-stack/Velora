@@ -40,6 +40,7 @@ run_godot design-tokens --script res://tests/design_tokens_validation.gd
 run_godot panel-primitives --script res://tests/panel_primitives_validation.gd
 run_godot settings --script res://tests/settings_validation.gd
 run_godot overlays --script res://tests/overlay_validation.gd
+run_godot input-actions --script res://tests/input_actions_validation.gd
 
 echo "Godot scene validation passed."
 run_godot phase1 --script res://tests/phase1_validation.gd

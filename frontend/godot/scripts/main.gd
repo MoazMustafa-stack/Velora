@@ -1,5 +1,6 @@
 extends Node2D
 
+const Actions = preload("res://scripts/input_actions.gd")
 const Overlay = preload("res://ui/overlay_coordinator.gd")
 const SessionBinding = preload("res://scripts/session_binding.gd")
 
@@ -23,6 +24,7 @@ var media_open: bool:
 var _stations: Array[Node] = []
 
 func _ready() -> void:
+	Actions.ensure_registered()
 	overlays = Overlay.new(player, hud, {
 		Overlay.Mode.WORKSPACES: workspace_map,
 		Overlay.Mode.NOTIFICATIONS: notification_feed,
@@ -64,18 +66,21 @@ func _ready() -> void:
 		_on_applications_changed(backend.applications)
 	hud.set_status("VELORA // POCKET TERMINAL")
 
+func _input(event: InputEvent) -> void:
+	if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):
+		get_viewport().set_input_as_handled()
+		_toggle_menu()
+
 func _unhandled_input(event: InputEvent) -> void:
-	if menu_open or map_open or feed_open or media_open or not event is InputEventKey:
+	if overlays.current != Overlay.Mode.NONE:
 		return
-	if not event.pressed or event.echo:
-		return
-	if event.keycode in [KEY_TAB, KEY_M]:
+	if Actions.pressed(event, "workspace_map"):
 		get_viewport().set_input_as_handled()
 		_toggle_workspace_map()
-	elif event.keycode == KEY_N:
+	elif Actions.pressed(event, "notification_feed"):
 		get_viewport().set_input_as_handled()
 		_toggle_notification_feed()
-	elif event.keycode == KEY_P:
+	elif Actions.pressed(event, "media_console"):
 		get_viewport().set_input_as_handled()
 		_toggle_media_console()
 
