@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+const Shell = preload("res://ui/panel_shell.gd")
+const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
 
 signal feed_closed
@@ -41,8 +43,12 @@ const MAX_VISIBLE_ENTRIES := 4
 const MAX_TRACKED_ENTRIES := 32
 
 var entries: Array[Dictionary] = []
-var selected_index := -1
-var scroll_offset := 0
+var _cursor := Cursor.new(MAX_VISIBLE_ENTRIES)
+var selected_index: int:
+	get: return _cursor.selected
+var scroll_offset: int:
+	get: return _cursor.offset
+var _shell: RefCounted
 var availability := "waiting"
 
 var _panel: PanelContainer
@@ -91,12 +97,6 @@ func close() -> void:
 	visible = false
 	feed_closed.emit()
 
-func toggle() -> void:
-	if visible:
-		close()
-	else:
-		open()
-
 func set_availability(next_availability: String) -> void:
 	availability = next_availability
 	_refresh_title()
@@ -136,12 +136,8 @@ func _selected_handle() -> String:
 	return ""
 
 func _preserve_selection(handle: String) -> void:
-	if not handle.is_empty():
-		for index in range(entries.size()):
-			if String(entries[index].get("handle", "")) == handle:
-				_select_index(index)
-				return
-	_select_index(selected_index)
+	_cursor.preserve(entries.map(func(entry: Dictionary): return entry["handle"]), handle, selected_index)
+	_refresh_rows()
 
 func _newest_first(a: Dictionary, b: Dictionary) -> bool:
 	var a_time := int(a.get("timestamp_unix_ms", 0))
@@ -152,29 +148,11 @@ func _newest_first(a: Dictionary, b: Dictionary) -> bool:
 	return String(a.get("handle", "")) < String(b.get("handle", ""))
 
 func _move_selection(step: int) -> void:
-	if entries.is_empty():
-		return
-	if selected_index < 0:
-		_select_index(0)
-		return
-	var count := entries.size()
-	var next_index := selected_index + step
-	while next_index < 0:
-		next_index += count
-	_select_index(next_index % count)
+	_cursor.move(step, entries.size())
+	_refresh_rows()
 
 func _select_index(index: int) -> void:
-	if entries.is_empty():
-		selected_index = -1
-		scroll_offset = 0
-		_refresh_rows()
-		return
-	selected_index = clampi(index, 0, entries.size() - 1)
-	if selected_index < scroll_offset:
-		scroll_offset = selected_index
-	elif selected_index >= scroll_offset + MAX_VISIBLE_ENTRIES:
-		scroll_offset = selected_index - MAX_VISIBLE_ENTRIES + 1
-	scroll_offset = clampi(scroll_offset, 0, maxi(0, entries.size() - MAX_VISIBLE_ENTRIES))
+	_cursor.select(index, entries.size())
 	_refresh_rows()
 
 func _refresh_title() -> void:
@@ -253,87 +231,14 @@ func _refresh_counter() -> void:
 		_counter.text = "%d/%d" % [selected_index + 1, entries.size()]
 
 func _build_ui() -> void:
-	var shade := ColorRect.new()
-	shade.name = "Shade"
-	shade.color = Tokens.SHADE
-	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(shade)
-
-	_panel = PanelContainer.new()
-	_panel.position = Tokens.PANEL_POSITION
-	_panel.custom_minimum_size = Vector2(Tokens.PANEL_WIDTH, 0)
-	add_child(_panel)
-
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 8)
-	margin.add_theme_constant_override("margin_top", 5)
-	margin.add_theme_constant_override("margin_right", 8)
-	margin.add_theme_constant_override("margin_bottom", 5)
-	_panel.add_child(margin)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	margin.add_child(box)
-
-	var header := HBoxContainer.new()
-	box.add_child(header)
-
-	_title = Label.new()
+	_shell = Shell.new(self)
+	_panel = _shell.panel
+	_title = _shell.title
 	_title.text = "NOTIFICATIONS // WAITING"
-	_title.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
-	_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
-	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_title.clip_text = true
-	_title.text_overrun_behavior = 3
-	header.add_child(_title)
-
-	_counter = Label.new()
-	_counter.text = "0/0"
-	_counter.add_theme_font_size_override("font_size", Tokens.FONT_TITLE)
-	_counter.add_theme_color_override("font_color", DIM_COLOR)
-	header.add_child(_counter)
-
+	_counter = _shell.counter
 	_rows_box = VBoxContainer.new()
-	_rows_box.add_theme_constant_override("separation", 2)
-	box.add_child(_rows_box)
-
-	# The row structure is fixed and every row keeps the same two clipped
-	# lines regardless of content, so feed bursts can never reflow the panel.
+	_rows_box.add_theme_constant_override("separation", Tokens.SPACE / 2)
+	_shell.box.add_child(_rows_box)
 	for _row_index in range(MAX_VISIBLE_ENTRIES):
-		_rows.append(_build_row())
-
-	_hint = Label.new()
-	_hint.text = "ARROWS SCROLL  N CLOSE"
-	_hint.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-	_hint.add_theme_color_override("font_color", DIM_COLOR)
-	box.add_child(_hint)
-
-func _build_row() -> Dictionary:
-	var row := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = ROW_BG
-	style.content_margin_left = 4
-	style.content_margin_right = 4
-	style.content_margin_top = 2
-	style.content_margin_bottom = 2
-	row.add_theme_stylebox_override("panel", style)
-	_rows_box.add_child(row)
-
-	var lines := VBoxContainer.new()
-	lines.add_theme_constant_override("separation", 0)
-	row.add_child(lines)
-
-	var summary := Label.new()
-	summary.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-	summary.clip_text = true
-	summary.text_overrun_behavior = 3
-	lines.add_child(summary)
-
-	var detail := Label.new()
-	detail.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-	detail.add_theme_color_override("font_color", DIM_COLOR)
-	detail.clip_text = true
-	detail.text_overrun_behavior = 3
-	lines.add_child(detail)
-
-	return {"panel": row, "style": style, "summary": summary, "detail": detail}
+		_rows.append(Shell.row(_rows_box))
+	_hint = _shell.finish("ARROWS SCROLL  N CLOSE")

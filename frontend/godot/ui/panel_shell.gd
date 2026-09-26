@@ -53,7 +53,7 @@ static func label(text: String = "", font_size: int = Tokens.FONT_BODY,
 	result.add_theme_font_size_override("font_size", font_size)
 	result.add_theme_color_override("font_color", color)
 	result.clip_text = true
-	result.text_overrun_behavior = TextServer.OVERRUN_TRIM_WORD_ELLIPSIS
+	result.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	return result
 
 static func row(parent: Container) -> Dictionary:
