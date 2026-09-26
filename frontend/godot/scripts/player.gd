@@ -54,6 +54,10 @@ func set_input_enabled(enabled: bool) -> void:
 		_last_prompt = ""
 		interaction_changed.emit("")
 
+func refresh_interaction() -> void:
+	if input_enabled:
+		_update_interaction()
+
 func _set_facing_from_movement(movement: Vector2) -> void:
 	if absf(movement.x) > absf(movement.y):
 		facing = Vector2.RIGHT if movement.x > 0 else Vector2.LEFT
