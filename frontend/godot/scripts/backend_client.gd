@@ -24,6 +24,7 @@ signal media_control_accepted(player_handle: String, verb: String)
 signal media_control_rejected(player_handle: String, verb: String, code: String, message: String, retryable: bool)
 signal notification_feed_changed(feed: Dictionary)
 signal notifications_availability_changed(availability: String)
+signal notifications_policy_changed(disabled: bool)
 
 enum ConnectionState {
 	DISCONNECTED,
@@ -85,6 +86,7 @@ var media_snapshot: Dictionary = {}
 var media_availability := "unknown"
 var notification_feed: Dictionary = {}
 var notifications_availability := "unknown"
+var notifications_policy_disabled := false
 
 var _bridge: Node
 var _socket_path := ""
@@ -808,7 +810,8 @@ func _on_applications_page(message: Dictionary) -> void:
 	_application_request_id = 0
 	applications_changed.emit(applications.duplicate(true))
 	connection_changed.emit("CORE // %d APPLICATIONS" % applications.size())
-	_emit_ux_status("ready", "READY // %d APPLICATIONS" % applications.size(), "ready", -1.0)
+	_emit_ux_status("ready", "READY // %d APPLICATIONS" % applications.size() if not applications.is_empty()
+		else "NO APPLICATIONS // CHECK DESKTOP ENTRIES", "ready" if not applications.is_empty() else "waiting", -1.0)
 
 func _fail_registry(detail: String, concise_message: String) -> void:
 	_pending_applications.clear()
@@ -940,6 +943,7 @@ func _on_notifications(message: Dictionary) -> void:
 	if sequence <= int(notification_feed.get("sequence", 0)):
 		return
 	notification_feed = feed
+	_set_notifications_policy_disabled(false)
 	_set_notifications_availability("available")
 	notification_feed_changed.emit(feed)
 
@@ -951,13 +955,24 @@ func _on_notifications_rejected(message: Dictionary) -> void:
 	_notifications_request_id = 0
 	match String(message.get("code", "")):
 		"notifications_unavailable":
+			# Protocol v5 already distinguishes policy-off (non-retryable) from
+			# an unavailable monitor (retryable). Do not infer Core's policy from
+			# the frontend environment, which may belong to a different process.
+			_set_notifications_policy_disabled(message.get("retryable", true) == false)
 			_set_notifications_availability("unavailable")
 		"monitor_restricted":
+			_set_notifications_policy_disabled(false)
 			_set_notifications_availability("restricted")
 		"feed_not_ready":
+			_set_notifications_policy_disabled(false)
 			_set_notifications_availability("waiting")
 		_:
 			pass
+
+func _set_notifications_policy_disabled(disabled: bool) -> void:
+	if notifications_policy_disabled != disabled:
+		notifications_policy_disabled = disabled
+		notifications_policy_changed.emit(disabled)
 
 func _set_media_availability(availability: String) -> void:
 	if media_availability == availability:

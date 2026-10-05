@@ -4,6 +4,7 @@ const Actions = preload("res://scripts/input_actions.gd")
 const Shell = preload("res://ui/panel_shell.gd")
 const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
+const Empty = preload("res://ui/empty_states.gd")
 
 signal feed_closed
 
@@ -51,6 +52,8 @@ var scroll_offset: int:
 	get: return _cursor.offset
 var _shell: RefCounted
 var availability := "waiting"
+var core_online := true
+var policy_disabled := false
 
 var _panel: PanelContainer
 var _title: Label
@@ -100,6 +103,20 @@ func close() -> void:
 func set_availability(next_availability: String) -> void:
 	availability = next_availability
 	_refresh_title()
+	_refresh_rows()
+
+func set_core_online(online: bool) -> void:
+	core_online = online
+	_refresh_title()
+	_refresh_rows()
+
+func set_policy_disabled(disabled: bool) -> void:
+	policy_disabled = disabled
+	_refresh_title()
+	_refresh_rows()
+
+func presentation_state() -> String:
+	return "offline" if not core_online else ("disabled" if policy_disabled else availability)
 
 func update_feed(feed: Dictionary) -> void:
 	var raw_entries = feed.get("notifications", null)
@@ -156,6 +173,11 @@ func _select_index(index: int) -> void:
 	_refresh_rows()
 
 func _refresh_title() -> void:
+	if presentation_state() in ["offline", "disabled"]:
+		var empty := Empty.describe("notifications", presentation_state())
+		_title.text = "NOTIFICATIONS // " + ("DISABLED" if policy_disabled and core_online else "CORE OFFLINE")
+		_title.add_theme_color_override("font_color", TONE_COLORS[empty.tone])
+		return
 	match availability:
 		"available":
 			_title.text = "NOTIFICATIONS // FEED"
@@ -171,12 +193,13 @@ func _refresh_title() -> void:
 			_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
 
 func _refresh_rows() -> void:
-	if entries.is_empty():
+	if entries.is_empty() or presentation_state() == "disabled":
+		var empty := Empty.describe("notifications", presentation_state())
 		for row_index in range(_rows.size()):
 			_apply_row(
 				_rows[row_index],
-				"NO NOTIFICATIONS" if row_index == 0 else "",
-				"",
+				empty.title if row_index == 0 else "",
+				empty.detail if row_index == 0 else "",
 				DIM_COLOR,
 				false
 			)
@@ -199,6 +222,8 @@ func _refresh_rows() -> void:
 		if app_name.is_empty():
 			app_name = "UNKNOWN APP"
 		var detail := "%s // %s" % [URGENCY_LABELS[urgency], app_name]
+		if presentation_state() != "available":
+			detail = "STALE // " + detail
 		var body := String(entry.get("body", ""))
 		if not body.is_empty():
 			detail += " // " + body
@@ -225,7 +250,7 @@ func _apply_row(
 	row["detail"].text = detail_text
 
 func _refresh_counter() -> void:
-	if selected_index < 0 or entries.is_empty():
+	if selected_index < 0 or entries.is_empty() or presentation_state() == "disabled":
 		_counter.text = "0/0"
 	else:
 		_counter.text = "%d/%d" % [selected_index + 1, entries.size()]

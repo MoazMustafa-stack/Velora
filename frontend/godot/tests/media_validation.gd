@@ -173,6 +173,8 @@ func _run_scene_wiring() -> void:
 	scene_backend.auto_connect = false
 	scene_backend.bridge_override = bridge
 	root.add_child(main)
+	main.backend.state = BackendClient.ConnectionState.READY
+	main._on_core_state_changed(BackendClient.ConnectionState.READY)
 	await process_frame
 	var console: CanvasLayer = main.get_node("MediaConsole")
 	_check(not console.visible, "P5.08 the media console starts hidden in the scene")
@@ -277,6 +279,7 @@ func _run_console() -> void:
 	)
 	console.set_availability("unknown")
 	_check(console._title.text.contains("WAITING"), "P5.08 unknown availability falls back to waiting")
+	console.set_availability("available")
 
 	# --- empty snapshots are explicit, never guessed
 	console.update_media(_snapshot(1, [], null))

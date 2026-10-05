@@ -4,6 +4,7 @@ const Actions = preload("res://scripts/input_actions.gd")
 const Shell = preload("res://ui/panel_shell.gd")
 const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
+const Empty = preload("res://ui/empty_states.gd")
 
 signal switch_requested(workspace_handle: String)
 signal map_closed
@@ -17,6 +18,8 @@ const COLUMNS := 5
 const MAX_VISIBLE_WORKSPACES := 20
 
 var visible_workspaces: Array[Dictionary] = []
+var availability := "waiting"
+var core_online := true
 var _cursor := Cursor.new(MAX_VISIBLE_WORKSPACES)
 var selected_index: int:
 	get: return _cursor.selected
@@ -69,7 +72,17 @@ func close() -> void:
 	visible = false
 	map_closed.emit()
 
-func set_availability(availability: String) -> void:
+func set_core_online(online: bool) -> void:
+	core_online = online
+	set_availability(availability)
+
+func set_availability(next_availability: String) -> void:
+	availability = next_availability
+	if not core_online:
+		_title.text = "WORKSPACES // CORE OFFLINE"
+		_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
+		_refresh_grid()
+		return
 	match availability:
 		"available":
 			_title.text = "WORKSPACES // HYPRLAND"
@@ -89,6 +102,7 @@ func set_availability(availability: String) -> void:
 		_:
 			_title.text = "WORKSPACES // WAITING"
 			_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
+	_refresh_grid()
 
 func update_session(snapshot: Dictionary) -> void:
 	var selected_handle := ""
@@ -151,11 +165,10 @@ func _refresh_grid() -> void:
 	_cells.clear()
 
 	if visible_workspaces.is_empty():
-		var empty_label := Label.new()
-		empty_label.text = "NO SESSION DATA"
-		empty_label.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
-		empty_label.add_theme_color_override("font_color", DIM_COLOR)
-		_grid.add_child(empty_label)
+		var empty := Empty.describe("workspaces", availability if core_online else "offline")
+		var text := Shell.label(empty.title + " // " + empty.detail)
+		text.custom_minimum_size = Vector2(224, 14)
+		_grid.add_child(text)
 		return
 
 	for index in range(visible_workspaces.size()):

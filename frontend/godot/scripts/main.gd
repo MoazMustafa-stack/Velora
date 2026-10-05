@@ -45,8 +45,11 @@ func _ready() -> void:
 	backend.telemetry_availability_changed.connect(hud.set_telemetry_availability)
 	backend.notification_feed_changed.connect(notification_feed.update_feed)
 	backend.notifications_availability_changed.connect(notification_feed.set_availability)
+	backend.notifications_policy_changed.connect(notification_feed.set_policy_disabled)
+	backend.state_changed.connect(_on_core_state_changed)
 	notification_feed.feed_closed.connect(_on_feed_closed)
 	notification_feed.set_availability(backend.notifications_availability)
+	notification_feed.set_policy_disabled(backend.notifications_policy_disabled)
 	if not backend.notification_feed.is_empty():
 		notification_feed.update_feed(backend.notification_feed)
 	backend.media_snapshot_changed.connect(media_console.update_media)
@@ -65,6 +68,12 @@ func _ready() -> void:
 	if not backend.applications.is_empty():
 		_on_applications_changed(backend.applications)
 	hud.set_status("VELORA // POCKET TERMINAL")
+	_on_core_state_changed(backend.state)
+
+func _on_core_state_changed(state: int) -> void:
+	var online := state == BackendClient.ConnectionState.READY
+	for panel in [workspace_map, notification_feed, media_console]:
+		panel.set_core_online(online)
 
 func _input(event: InputEvent) -> void:
 	if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):

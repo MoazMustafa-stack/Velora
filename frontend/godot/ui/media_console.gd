@@ -4,6 +4,7 @@ const Actions = preload("res://scripts/input_actions.gd")
 const Shell = preload("res://ui/panel_shell.gd")
 const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
+const Empty = preload("res://ui/empty_states.gd")
 
 signal control_requested(player_handle: String, verb: String)
 signal console_closed
@@ -72,6 +73,7 @@ var scroll_offset: int:
 	get: return _cursor.offset
 var _shell: RefCounted
 var availability := "waiting"
+var core_online := true
 var active_handle := ""
 
 var _panel: PanelContainer
@@ -142,6 +144,12 @@ func close() -> void:
 func set_availability(next_availability: String) -> void:
 	availability = next_availability
 	_refresh_title()
+	_refresh_rows()
+
+func set_core_online(online: bool) -> void:
+	core_online = online
+	_refresh_title()
+	_refresh_rows()
 
 # Consumes a client-normalized media snapshot. Last-good players are kept
 # across malformed frames and stale availability so the console keeps
@@ -225,6 +233,10 @@ func _select_index(index: int) -> void:
 	_refresh_rows()
 
 func _refresh_title() -> void:
+	if not core_online:
+		_title.text = "MEDIA // CORE OFFLINE"
+		_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
+		return
 	match availability:
 		"available":
 			_title.text = "MEDIA // PLAYERS"
@@ -320,11 +332,12 @@ func _set_feedback(message: String, tone: String) -> void:
 
 func _refresh_rows() -> void:
 	if players.is_empty():
+		var empty := Empty.describe("media", availability if core_online else "offline")
 		for row_index in range(_rows.size()):
 			_apply_row(
 				_rows[row_index],
-				"NO PLAYERS" if row_index == 0 else "",
-				"",
+				empty.title if row_index == 0 else "",
+				empty.detail if row_index == 0 else "",
 				DIM_COLOR,
 				false
 			)
@@ -366,6 +379,8 @@ func _build_summary(player_index: int, player: Dictionary) -> String:
 func _build_detail(player: Dictionary) -> String:
 	var status := String(player.get("status", ""))
 	var parts: Array[String] = [String(STATUS_LABELS.get(status, "UNKNOWN"))]
+	if not core_online or availability != "available":
+		parts.push_front("STALE")
 	if String(player.get("handle", "")) == active_handle:
 		parts.append("ACTIVE")
 	var title := String(player.get("title", ""))

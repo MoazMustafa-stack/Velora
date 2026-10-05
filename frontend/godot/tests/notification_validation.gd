@@ -49,6 +49,8 @@ func _run() -> void:
 	var scene_backend: BackendClient = main.get_node("BackendClient")
 	scene_backend.auto_connect = false
 	root.add_child(main)
+	main.backend.state = BackendClient.ConnectionState.READY
+	main._on_core_state_changed(BackendClient.ConnectionState.READY)
 	await process_frame
 	var scene_feed: CanvasLayer = main.get_node("NotificationFeed")
 	scene_backend.notification_feed_changed.emit(_feed([
@@ -98,6 +100,7 @@ func _run() -> void:
 	)
 	panel.set_availability("unknown")
 	_check(panel._title.text.contains("WAITING"), "P5.10 unknown availability falls back to waiting")
+	panel.set_availability("available")
 
 	# --- empty feeds are explicit, never guessed ---
 	panel.update_feed(_feed([], 1))
