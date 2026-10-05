@@ -9,8 +9,8 @@ const TONE_COLORS := Tokens.TONES
 @onready var connection: Label = $ConnectionPanel/Margin/Connection
 @onready var prompt_panel: PanelContainer = $PromptPanel
 @onready var prompt: Label = $PromptPanel/Margin/Prompt
-@onready var menu_overlay: Control = $MenuOverlay
-@onready var menu_connection: Label = $MenuOverlay/MenuPanel/Margin/Content/Safety
+var menu_overlay: CanvasLayer
+var menu_connection: Label
 
 var _world_status := "VELORA // POCKET TERMINAL"
 var _world_tone := "ready"
@@ -69,8 +69,9 @@ func set_connection_status(message: String, tone: String) -> void:
 	_connection_tone = tone
 	connection.text = message
 	connection.add_theme_color_override("font_color", _tone_color(tone))
-	menu_connection.text = message
-	menu_connection.add_theme_color_override("font_color", _tone_color(tone))
+	if menu_connection != null:
+		menu_connection.text = message
+		menu_connection.add_theme_color_override("font_color", _tone_color(tone))
 	_refresh_visibility()
 
 func set_telemetry_availability(availability: String) -> void:
@@ -112,6 +113,11 @@ func set_menu_visible(visible: bool) -> void:
 		_render_status()
 	_refresh_visibility()
 
+func attach_pause(panel: CanvasLayer) -> void:
+	menu_overlay = panel
+	menu_connection = panel.backend_status
+	set_connection_status(connection.text, _connection_tone)
+
 func set_modal_active(active: bool) -> void:
 	_modal_active = active
 	_refresh_visibility()
@@ -121,7 +127,7 @@ func set_help(message: String) -> void:
 
 func _refresh_visibility() -> void:
 	var tone := _transient_tone if _transient_active else _world_tone
-	var shown := Layout.visibility(_modal_active or menu_overlay.visible,
+	var shown := Layout.visibility(_modal_active or (menu_overlay != null and menu_overlay.visible),
 		tone == "failure" or _connection_tone == "failure", not prompt.text.is_empty())
 	$StatusPanel.visible = shown.world
 	$ConnectionPanel.visible = shown.world
@@ -131,7 +137,7 @@ func _refresh_visibility() -> void:
 
 func _render_status() -> void:
 	_refresh_visibility()
-	if menu_overlay.visible:
+	if menu_overlay != null and menu_overlay.visible:
 		return
 	if _transient_active:
 		status.text = _transient_status

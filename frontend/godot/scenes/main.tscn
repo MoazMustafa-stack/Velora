@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/backend_client.gd" id="2_backend"]
@@ -9,6 +9,8 @@
 [ext_resource type="Script" path="res://ui/workspace_map.gd" id="7_workspace_map"]
 [ext_resource type="Script" path="res://ui/notification_feed.gd" id="8_notification_feed"]
 [ext_resource type="Script" path="res://ui/media_console.gd" id="9_media_console"]
+
+[ext_resource type="Script" path="res://ui/pause_panel.gd" id="10_pause"]
 
 [sub_resource type="RectangleShape2D" id="Shape_player"]
 size = Vector2(10, 8)
@@ -210,76 +212,6 @@ theme_override_colors/font_color = Color(0.584314, 0.65098, 0.760784, 1)
 theme_override_font_sizes/font_size = 7
 text = "WASD MOVE  SHIFT RUN  E USE"
 
-[node name="MenuOverlay" type="Control" parent="HUD"]
-visible = false
-layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 1
-
-[node name="Shade" type="ColorRect" parent="HUD/MenuOverlay"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-color = Color(0.027451, 0.039216, 0.07451, 0.901961)
-
-[node name="MenuPanel" type="PanelContainer" parent="HUD/MenuOverlay"]
-layout_mode = 0
-offset_left = 62.0
-offset_top = 32.0
-offset_right = 258.0
-offset_bottom = 148.0
-
-[node name="Margin" type="MarginContainer" parent="HUD/MenuOverlay/MenuPanel"]
-layout_mode = 2
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 10
-
-[node name="Content" type="VBoxContainer" parent="HUD/MenuOverlay/MenuPanel/Margin"]
-layout_mode = 2
-theme_override_constants/separation = 5
-
-[node name="Title" type="Label" parent="HUD/MenuOverlay/MenuPanel/Margin/Content"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.603922, 0.956863, 0.905882, 1)
-theme_override_font_sizes/font_size = 13
-text = "VELORA"
-horizontal_alignment = 1
-
-[node name="Subtitle" type="Label" parent="HUD/MenuOverlay/MenuPanel/Margin/Content"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.960784, 0.72549, 0.258824, 1)
-theme_override_font_sizes/font_size = 8
-text = "PHASE 1 // PIXEL HUB"
-horizontal_alignment = 1
-
-[node name="Divider" type="HSeparator" parent="HUD/MenuOverlay/MenuPanel/Margin/Content"]
-layout_mode = 2
-
-[node name="Controls" type="Label" parent="HUD/MenuOverlay/MenuPanel/Margin/Content"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.862745, 0.901961, 0.94902, 1)
-theme_override_font_sizes/font_size = 8
-text = "WASD / ARROWS     MOVE\nSHIFT              SPRINT\nE / ENTER          INTERACT\nESC                RESUME"
-
-[node name="Safety" type="Label" parent="HUD/MenuOverlay/MenuPanel/Margin/Content"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.584314, 0.65098, 0.760784, 1)
-theme_override_font_sizes/font_size = 7
-text = "CORE OFFLINE"
-horizontal_alignment = 1
-clip_text = true
-text_overrun_behavior = 3
-
 [node name="WorkspaceMap" type="CanvasLayer" parent="."]
 layer = 2
 visible = false
@@ -294,3 +226,8 @@ script = ExtResource("8_notification_feed")
 layer = 4
 visible = false
 script = ExtResource("9_media_console")
+
+[node name="PausePanel" type="CanvasLayer" parent="."]
+layer = 5
+visible = false
+script = ExtResource("10_pause")

@@ -99,7 +99,7 @@ func _run() -> void:
 	player._unhandled_input(_action_event("menu"))
 	await process_frame
 	_check(main.menu_open, "P1.06 Escape opens the pause/help menu")
-	_check(hud.get_node("MenuOverlay").visible, "P1.06 menu presents controls and safety state")
+	_check(main.pause_panel.visible, "P1.06 menu presents controls and safety state")
 	_check(not player.input_enabled, "P1.06 menu locks player input")
 	var paused_position := player.position
 	await _hold("move_right", 8)

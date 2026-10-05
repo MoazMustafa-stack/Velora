@@ -20,6 +20,7 @@ var _last_player_position := Vector2.ZERO
 @onready var workspace_map: CanvasLayer = $WorkspaceMap
 @onready var notification_feed: CanvasLayer = $NotificationFeed
 @onready var media_console: CanvasLayer = $MediaConsole
+@onready var pause_panel: CanvasLayer = $PausePanel
 
 var overlays: RefCounted
 # Read-only compatibility views; the coordinator is the only state owner.
@@ -43,7 +44,13 @@ func _ready() -> void:
 	onboarding.completed.connect(_complete_onboarding)
 	_last_player_position = player.position
 	_refresh_help()
+	pause_panel.configure(backend)
+	hud.attach_pause(pause_panel)
+	pause_panel.resume_requested.connect(func(): overlays.close(Overlay.Mode.PAUSE))
+	pause_panel.replay_requested.connect(func(): replay_onboarding(); overlays.close(Overlay.Mode.PAUSE))
+	pause_panel.dismiss_requested.connect(func(): onboarding.dismiss(); overlays.close(Overlay.Mode.PAUSE))
 	overlays = Overlay.new(player, hud, {
+		Overlay.Mode.PAUSE: pause_panel,
 		Overlay.Mode.WORKSPACES: workspace_map,
 		Overlay.Mode.NOTIFICATIONS: notification_feed,
 		Overlay.Mode.MEDIA: media_console,
@@ -65,6 +72,8 @@ func _ready() -> void:
 	backend.notifications_availability_changed.connect(notification_feed.set_availability)
 	backend.notifications_policy_changed.connect(notification_feed.set_policy_disabled)
 	backend.state_changed.connect(_on_core_state_changed)
+	for signal_name in ["session_availability_changed", "telemetry_availability_changed", "notifications_availability_changed", "notifications_policy_changed", "media_availability_changed"]:
+		backend.connect(signal_name, func(_value): pause_panel.refresh())
 	notification_feed.feed_closed.connect(_on_feed_closed)
 	notification_feed.set_availability(backend.notifications_availability)
 	notification_feed.set_policy_disabled(backend.notifications_policy_disabled)
@@ -117,6 +126,7 @@ func _on_core_state_changed(state: int) -> void:
 	var online := state == BackendClient.ConnectionState.READY
 	for panel in [workspace_map, notification_feed, media_console]:
 		panel.set_core_online(online)
+	pause_panel.refresh()
 
 func _input(event: InputEvent) -> void:
 	if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):
@@ -222,6 +232,7 @@ func _on_backend_ux_status(
 		hud.set_status(hud_message, tone)
 	else:
 		hud.show_transient(hud_message, tone, transient_seconds)
+	pause_panel.refresh()
 
 func _on_launch_status_changed(
 	desktop_id: String,
@@ -262,6 +273,7 @@ func _on_applications_changed(applications: Array) -> void:
 
 func _toggle_menu() -> void:
 	if overlays.current != Overlay.Mode.NONE:
+		if menu_open and pause_panel.back(): return
 		overlays.back()
 	else:
 		onboarding.observe("pause")
