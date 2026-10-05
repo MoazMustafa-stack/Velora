@@ -44,3 +44,21 @@ The fixture disables backend auto-connect and exports native and scaled
 frames for populated, empty, waiting, unavailable, stale, and crowded views.
 It reads no live notifications, media or compositor data. Review these frames
 alongside `./scripts/velora.sh gate` and `./scripts/velora.sh perf`.
+
+## Experience-pass motion and state audit (D6.06–D6.09)
+
+The only animated world asset is the player's two-frame walk cycle in
+`player.gd`. Reduced motion selects step zero immediately; velocity, facing,
+collision and interactions remain unchanged. There are no tweens, flashing
+status effects, sliding overlays or animated selection treatments. Transient
+HUD expiry changes text once and restores the prior useful status.
+
+Station LEDs now also use high-contrast check / exclamation / cross shapes
+for ready / attention / offline. Workspace status markers compose `>` active,
+`!` urgent and `~` special; `*` independently identifies the selected cell.
+Feed urgency, media playback, waiting, disabled, failure and stale states retain
+explicit text/markers. No status information requires color or animation.
+
+This audit covers the current hub assets. D6.05's unified world-object art and
+room redesign are still pending and require another native/grayscale review
+before D6.09 can receive final acceptance.

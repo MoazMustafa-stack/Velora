@@ -194,8 +194,10 @@ func _refresh_title() -> void:
 			_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
 
 func _refresh_rows() -> void:
-	if entries.is_empty() or presentation_state() == "disabled":
-		var empty := Empty.describe("notifications", presentation_state())
+	if entries.is_empty() or policy_disabled:
+		# Privacy wins even after Core disconnects: never reveal cached content
+		# just because presentation_state() switches from disabled to offline.
+		var empty := Empty.describe("notifications", "disabled" if policy_disabled else presentation_state())
 		for row_index in range(_rows.size()):
 			_apply_row(
 				_rows[row_index],
@@ -251,7 +253,7 @@ func _apply_row(
 	row["detail"].text = detail_text
 
 func _refresh_counter() -> void:
-	if selected_index < 0 or entries.is_empty() or presentation_state() == "disabled":
+	if selected_index < 0 or entries.is_empty() or policy_disabled:
 		_counter.text = "0/0"
 	else:
 		_counter.text = "%d/%d" % [selected_index + 1, entries.size()]

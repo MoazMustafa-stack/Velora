@@ -180,6 +180,7 @@ func _set_cell_selected(index: int, is_selected: bool) -> void:
 		return
 	var style: StyleBoxFlat = _cells[index]["style"]
 	style.bg_color = CELL_BG_SELECTED if is_selected else CELL_BG
+	_cells[index].header.text = _cells[index].marker + ("*" if is_selected else " ") + _cells[index].display_name
 
 func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 	var is_active := bool(workspace.get("is_active", false))
@@ -189,16 +190,16 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 	var display_name := String(workspace.get("name", "?"))
 	var monitor := String(workspace.get("monitor", ""))
 
-	var marker := " "
+	var marker := ""
 	var tone_color := DIM_COLOR if window_count == 0 else TEXT_COLOR
 	if is_active:
 		marker = ">"
 		tone_color = TONE_COLORS["ready"]
-	elif is_urgent:
-		marker = "!"
+	if is_urgent:
+		marker += "!"
 		tone_color = TONE_COLORS["failure"]
-	elif is_special:
-		marker = "~"
+	if is_special:
+		marker += "~"
 		tone_color = TONE_COLORS["waiting"]
 
 	var cell := PanelContainer.new()
@@ -217,7 +218,7 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 	cell.add_child(box)
 
 	var header := Label.new()
-	header.text = "%s%s" % [marker, display_name]
+	header.text = marker + ("*" if index == selected_index else " ") + display_name
 	header.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	header.add_theme_color_override("font_color", tone_color)
 	header.clip_text = true
@@ -237,7 +238,7 @@ func _build_cell(index: int, workspace: Dictionary) -> Dictionary:
 	detail.text_overrun_behavior = 3
 	box.add_child(detail)
 
-	return {"panel": cell, "style": style}
+	return {"panel": cell, "style": style, "header": header, "marker": marker, "display_name": display_name}
 
 func _build_ui() -> void:
 	_shell = Shell.new(self, Tokens.MAP_POSITION, Tokens.MAP_MINIMUM, 6, false)

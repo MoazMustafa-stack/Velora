@@ -15,6 +15,11 @@ const AMBER := Tokens.WORLD_AMBER
 const RED := Tokens.FAILURE
 const SOFT_WHITE := Tokens.WORLD_TEXT
 const SHADOW := Tokens.WORLD_SHADOW
+const STATE_MARKERS := {
+	"ready": ["....#", "...#.", "#.#..", ".#...", "....."],
+	"attention": ["..#..", "..#..", "..#..", ".....", "..#.."],
+	"offline": ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
+}
 
 static func create_tileset() -> TileSet:
 	var image := Image.create_empty(64, 16, false, Image.FORMAT_RGBA8)
@@ -99,9 +104,14 @@ static func create_workstation_texture(
 	_draw_station_glyph(image, station_kind, accent)
 	image.fill_rect(Rect2i(14, 18, 4, 3), STEEL_LIGHT)
 	image.fill_rect(Rect2i(10, 22, 12, 2), Color("50698e"))
-	image.fill_rect(Rect2i(24, 21, 2, 2), AMBER if state == "offline" else accent)
 	if state == "attention":
 		image.fill_rect(Rect2i(12, 8, 8, 4), AMBER)
+	# A high-contrast check / exclamation / cross, not a color-only LED.
+	image.fill_rect(Rect2i(23, 20, 7, 7), SHADOW)
+	var marker: Array = STATE_MARKERS.get(state, STATE_MARKERS.offline)
+	for y in range(5):
+		for x in range(5):
+			if marker[y][x] == "#": image.set_pixel(24 + x, 21 + y, SOFT_WHITE)
 	return ImageTexture.create_from_image(image)
 
 static func _draw_station_glyph(image: Image, station_kind: String, accent: Color) -> void:
