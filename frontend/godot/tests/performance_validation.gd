@@ -17,6 +17,7 @@ func _run() -> void:
 
 	var main := packed.instantiate()
 	main.load_preferences = false
+	main.get_node("BackendClient").auto_connect = false
 	root.add_child(main)
 	await process_frame
 	await process_frame

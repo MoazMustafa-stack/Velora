@@ -34,6 +34,7 @@ func _run() -> void:
 		return
 	var main := packed.instantiate()
 	main.load_preferences = false
+	main.get_node("BackendClient").auto_connect = false
 	root.add_child(main)
 	await _physics_frames(3)
 
