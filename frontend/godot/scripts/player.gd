@@ -17,6 +17,7 @@ signal menu_requested
 var facing := Vector2.DOWN
 var active_interactable: Node = null
 var input_enabled := true
+var reduced_motion := false
 var _animation_time := 0.0
 var _animation_step := 0
 var _last_prompt := ""
@@ -59,6 +60,14 @@ func refresh_interaction() -> void:
 	if input_enabled:
 		_update_interaction()
 
+func set_reduced_motion(enabled: bool) -> void:
+	reduced_motion = enabled
+	# Immediate, even while paused; no residual alternate frame until next tick.
+	if enabled:
+		_animation_time = 0.0
+		_animation_step = 0
+		_update_sprite()
+
 func _set_facing_from_movement(movement: Vector2) -> void:
 	if absf(movement.x) > absf(movement.y):
 		facing = Vector2.RIGHT if movement.x > 0 else Vector2.LEFT
@@ -78,7 +87,7 @@ func _update_detector_position() -> void:
 			interaction_detector.position = Vector2(0, 14)
 
 func _update_animation(delta: float, moving: bool) -> void:
-	if moving:
+	if moving and not reduced_motion:
 		_animation_time += delta
 		if _animation_time >= animation_interval:
 			_animation_time = 0.0

@@ -39,6 +39,7 @@ func _ready() -> void:
 	settings = Store.new(preferences_path)
 	if load_preferences:
 		preferences_error = settings.load_settings()
+	_apply_preferences()
 	onboarding = Onboarding.new(settings.onboarding_completed())
 	onboarding.changed.connect(_refresh_help)
 	onboarding.completed.connect(_complete_onboarding)
@@ -125,10 +126,14 @@ func _save_preferences() -> Error:
 	return preferences_error
 
 func _on_preferences_changed() -> void:
+	_apply_preferences()
 	if _save_preferences() != OK:
 		pause_panel.set_feedback("NOT SAVED // CHECK SETTINGS FILE ACCESS")
 	else:
 		pause_panel.set_feedback("SAVED // UI PREFERENCES ONLY")
+
+func _apply_preferences() -> void:
+	player.set_reduced_motion(settings.reduced_motion())
 
 func reset_preferences() -> void:
 	# Disabled IO means reset is in-memory too, never delete the production file.
@@ -137,6 +142,7 @@ func reset_preferences() -> void:
 		pause_panel.set_feedback("RESET FAILED // ORIGINAL SETTINGS KEPT")
 		return
 	settings = Store.new(preferences_path)
+	_apply_preferences()
 	pause_panel.configure(backend, settings)
 	onboarding.replay()
 	pause_panel.show_page("settings")
