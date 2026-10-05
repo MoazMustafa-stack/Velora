@@ -35,9 +35,15 @@ Phase 6 is the frontend experience pass, not another system integration.
 Its D6.01–D6.04 foundation introduces semantic design tokens, shared panel
 and list primitives, a bounded UI-only preferences API, and one modal/input
 coordinator. See the [visual inventory](frontend/godot/ASSET_INVENTORY.md)
-and [settings contract](config/README.md). Settings screens, onboarding,
-art redesign, accessibility controls, audio, remapping UI, and station
-customization remain later Phase 6 work.
+and [settings contract](config/README.md). The D6.06–D6.09 experience slice
+adds prioritized, clipped HUD regions, contextual first-run hints, distinct
+capability empty states, keyboard pause/help/settings/diagnostics, and persisted
+reduced motion with color-independent status markers. See the
+[experience review and manual checklist](frontend/godot/EXPERIENCE_REVIEW.md).
+It is locally validated, not yet merged or owner-accepted. D6.05's art/layout
+redesign is still pending, so D6.09 needs another accessibility review after
+that work. Audio cues, remapping/controller UI, station customization, and
+the final Phase 6 gate remain D6.10–D6.13 work.
 
 Phase 1.01–1.10 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
 hub, eight-direction movement with four-direction facing, sprinting, physical

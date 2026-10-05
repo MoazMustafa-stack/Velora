@@ -8,10 +8,10 @@ Godot Compatibility renderer. No downloaded art or fonts are introduced.
 | Floor, walls, path, threshold | `scripts/pixel_art.gd`: generated 64 × 16 atlas of four 16 × 16 tiles; hub builds boundary/collisions |
 | Player | Generated 16 × 24 sprites, four directions × two steps; player caches textures |
 | Application stations | Generated workstation texture; three registry-backed objects and state markers |
-| HUD and pause | `scenes/main.tscn`, `ui/hud.gd`; fixed status/connection/prompt regions, scene-local styles |
+| HUD and pause | `scenes/main.tscn`, `ui/hud.gd`, `ui/pause_panel.gd`; fixed priority regions and shared PanelShell keyboard pages |
 | Notification feed | Four fixed two-line rows; `!! CRIT`, `! NORM`, `. LOW`; 32 tracked entries |
 | Media console | Three fixed two-line rows; `+ PLAY`, `= PAUSE`, `. STOP`; 16 tracked players, capability-specific controls |
-| Workspace map | Five-column, maximum 20-cell grid; active `>`, urgent `!`, special `~` markers |
+| Workspace map | Five-column, maximum 20-cell grid; active `>`, urgent `!`, special `~`, independent selected `*` markers |
 | Typography | Godot default font; body 7 px, title/counter 8 px; clipped fixed-region labels |
 | Spacing | 4 px base, 16 px tile; list panels at (40,24), width 240; map at (40,30) |
 
