@@ -1,6 +1,7 @@
 extends CanvasLayer
 
 const Tokens = preload("res://ui/design_tokens.gd")
+const Layout = preload("res://ui/hud_layout.gd")
 
 const TONE_COLORS := Tokens.TONES
 
@@ -18,15 +19,28 @@ var _transient_tone := "ready"
 var _transient_remaining := 0.0
 var _transient_active := false
 var _telemetry: Label
+var _modal_active := false
+var _connection_tone := "failure"
+@onready var help: Label = $Help
 
 func _ready() -> void:
 	prompt_panel.visible = false
 	_telemetry = Label.new()
-	_telemetry.position = Vector2(8, 146)
-	_telemetry.size = Vector2(304, 12)
+	Layout.fit(_telemetry, Layout.FOOTER)
 	_telemetry.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	_telemetry.clip_text = true
+	_telemetry.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	add_child(_telemetry)
+	Layout.fit($StatusPanel, Layout.STATUS)
+	Layout.fit($ConnectionPanel, Layout.CONNECTION)
+	Layout.fit(prompt_panel, Layout.FOOTER)
+	Layout.fit(help, Layout.HELP)
+	for label in [status, connection, prompt, help]:
+		label.clip_text = true
+		label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		label.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
+	for edge in ["top", "bottom"]:
+		$PromptPanel/Margin.add_theme_constant_override("margin_" + edge, 2)
 	set_telemetry_availability("waiting")
 	set_connection_status("CORE OFFLINE", "failure")
 	_render_status()
@@ -41,7 +55,7 @@ func _process(delta: float) -> void:
 
 func set_interaction_prompt(message: String) -> void:
 	prompt.text = message
-	prompt_panel.visible = not message.is_empty() and not menu_overlay.visible
+	_refresh_visibility()
 
 func set_status(message: String, tone := "ready") -> void:
 	_world_status = message
@@ -52,10 +66,12 @@ func set_backend_status(message: String) -> void:
 	set_status("VELORA // " + message)
 
 func set_connection_status(message: String, tone: String) -> void:
+	_connection_tone = tone
 	connection.text = message
 	connection.add_theme_color_override("font_color", _tone_color(tone))
 	menu_connection.text = message
 	menu_connection.add_theme_color_override("font_color", _tone_color(tone))
+	_refresh_visibility()
 
 func set_telemetry_availability(availability: String) -> void:
 	_telemetry.text = "SYS // " + ("WAITING FOR SAMPLE" if availability == "waiting" else "CORE OFFLINE")
@@ -90,14 +106,31 @@ func show_transient(message: String, tone: String, duration_seconds: float) -> v
 func set_menu_visible(visible: bool) -> void:
 	menu_overlay.visible = visible
 	if visible:
-		prompt_panel.visible = false
 		status.text = "VELORA // PAUSED"
 		status.add_theme_color_override("font_color", _tone_color("waiting"))
 	else:
-		prompt_panel.visible = not prompt.text.is_empty()
 		_render_status()
+	_refresh_visibility()
+
+func set_modal_active(active: bool) -> void:
+	_modal_active = active
+	_refresh_visibility()
+
+func set_help(message: String) -> void:
+	help.text = message
+
+func _refresh_visibility() -> void:
+	var tone := _transient_tone if _transient_active else _world_tone
+	var shown := Layout.visibility(_modal_active or menu_overlay.visible,
+		tone == "failure" or _connection_tone == "failure", not prompt.text.is_empty())
+	$StatusPanel.visible = shown.world
+	$ConnectionPanel.visible = shown.world
+	help.visible = shown.world
+	prompt_panel.visible = shown.prompt
+	_telemetry.visible = shown.telemetry
 
 func _render_status() -> void:
+	_refresh_visibility()
 	if menu_overlay.visible:
 		return
 	if _transient_active:

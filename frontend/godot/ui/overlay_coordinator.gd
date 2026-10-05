@@ -21,6 +21,7 @@ func open(mode: Mode) -> void:
 		return
 	var was_world := _mode == Mode.NONE
 	_mode = mode
+	_hud.set_modal_active(mode != Mode.NONE)
 	for panel in _panels.values():
 		# Hide without emitting a close event that could reenter the coordinator.
 		panel.visible = false
