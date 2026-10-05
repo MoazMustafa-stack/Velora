@@ -33,7 +33,6 @@ func _ready() -> void:
 	add_child(_telemetry)
 	Layout.fit($StatusPanel, Layout.STATUS)
 	Layout.fit($ConnectionPanel, Layout.CONNECTION)
-	Layout.fit(prompt_panel, Layout.FOOTER)
 	Layout.fit(help, Layout.HELP)
 	for label in [status, connection, prompt, help]:
 		label.clip_text = true
@@ -41,6 +40,13 @@ func _ready() -> void:
 		label.add_theme_font_size_override("font_size", Tokens.FONT_BODY)
 	for edge in ["top", "bottom"]:
 		$PromptPanel/Margin.add_theme_constant_override("margin_" + edge, 2)
+	# The default theme adds enough vertical padding to force a 23px minimum,
+	# overriding size and overlapping HELP. Own footer padding explicitly.
+	var footer_style := prompt_panel.get_theme_stylebox("panel").duplicate() as StyleBox
+	footer_style.set_content_margin(SIDE_TOP, 0)
+	footer_style.set_content_margin(SIDE_BOTTOM, 0)
+	prompt_panel.add_theme_stylebox_override("panel", footer_style)
+	Layout.fit(prompt_panel, Layout.FOOTER)
 	set_telemetry_availability("waiting")
 	set_connection_status("CORE OFFLINE", "failure")
 	_render_status()

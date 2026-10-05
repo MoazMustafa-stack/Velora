@@ -27,6 +27,8 @@ func _run() -> void:
 		check(Rect2(0, 0, 320, 180).encloses(region), "Every HUD region fits the canvas")
 	check(not Layout.STATUS.intersects(Layout.CONNECTION), "Status and connection never overlap")
 	check(not Layout.FOOTER.intersects(Layout.HELP), "Footer and controls never overlap")
+	for pair in [[hud.get_node("StatusPanel"), Layout.STATUS], [hud.get_node("ConnectionPanel"), Layout.CONNECTION], [hud.prompt_panel, Layout.FOOTER], [hud.help, Layout.HELP]]:
+		check(pair[1].encloses(pair[0].get_rect()), "Actual HUD control fits its reserved region: " + pair[0].name + " " + str(pair[0].get_rect()))
 	for label in [hud.status, hud.connection, hud.prompt, hud.help, hud._telemetry]:
 		check(label.clip_text and label.text_overrun_behavior != 0, "Every fixed HUD label clips")
 	hud.show_transient("FAILURE", "failure", 0.1)

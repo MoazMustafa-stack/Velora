@@ -1,8 +1,10 @@
 extends SceneTree
 ## Synthetic viewport-only captures: no desktop, production settings or IPC.
 const Overlay = preload("res://ui/overlay_coordinator.gd")
+const Layout = preload("res://ui/hud_layout.gd")
 var failed := false
 var output := ""
+var hud: CanvasLayer
 
 func _initialize() -> void:
 	call_deferred("run")
@@ -23,6 +25,7 @@ func run() -> void:
 	main.get_node("BackendClient").auto_connect = false
 	root.add_child(main)
 	await process_frame
+	hud = main.hud
 	main.player.set_physics_process(false)
 	main.backend.state = BackendClient.ConnectionState.READY
 	main._on_core_state_changed(main.backend.state)
@@ -87,6 +90,8 @@ func capture(label: String, panel: Control = null) -> void:
 	await process_frame
 	await process_frame
 	await RenderingServer.frame_post_draw
+	for pair in [[hud.get_node("StatusPanel"), Layout.STATUS], [hud.get_node("ConnectionPanel"), Layout.CONNECTION], [hud.prompt_panel, Layout.FOOTER], [hud.help, Layout.HELP]]:
+		check(pair[1].encloses(pair[0].get_rect()), "Actual HUD fits reserved bounds: " + label + " " + pair[0].name)
 	if panel != null:
 		check(Rect2(0, 0, 320, 180).encloses(panel.get_global_rect()), "Panel fits canvas: " + label + " " + str(panel.get_global_rect()))
 		check_bounds(panel, panel.get_global_rect(), label)
