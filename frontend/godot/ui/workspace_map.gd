@@ -66,6 +66,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func open() -> void:
 	visible = true
+	_refresh_hint()
 	_select_index(_default_selection())
 
 func close() -> void:
@@ -248,5 +249,9 @@ func _build_ui() -> void:
 	_grid.add_theme_constant_override("h_separation", 3)
 	_grid.add_theme_constant_override("v_separation", 3)
 	_shell.box.add_child(_grid)
-	_hint = _shell.finish("ARROWS SELECT  TAB CLOSE")
+	_hint = _shell.finish("")
+	_refresh_hint()
+
+func _refresh_hint() -> void:
+	_hint.text = "%s/%s/%s/%s SELECT  %s CLOSE" % [Actions.binding_label("nav_up", 1), Actions.binding_label("nav_left", 1), Actions.binding_label("nav_down", 1), Actions.binding_label("nav_right", 1), Actions.binding_label("workspace_map", 1)]
 	_refresh_grid()

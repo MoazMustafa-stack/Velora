@@ -130,9 +130,10 @@ func save_settings() -> Error:
 	return error
 
 func reset() -> Error:
-	_defaults()
 	if FileAccess.file_exists(_path):
-		return DirAccess.remove_absolute(_path)
+		var error := DirAccess.remove_absolute(_path)
+		if error != OK: return error
+	_defaults()
 	return OK
 
 func _defaults() -> void:

@@ -414,16 +414,16 @@ func _refresh_hint() -> void:
 			# player, so the label and the wire request can never disagree.
 			var toggle_verb := _toggle_verb(player)
 			if not toggle_verb.is_empty() and _verb_allowed(player, toggle_verb):
-				parts.append("SPACE %s" % VERB_LABELS[toggle_verb])
+				parts.append("%s %s" % [Actions.binding_label("media_toggle", 1).to_upper(), VERB_LABELS[toggle_verb]])
 			if _verb_allowed(player, "stop"):
-				parts.append("X STOP")
+				parts.append("%s STOP" % Actions.binding_label("media_stop", 1).to_upper())
 			if _verb_allowed(player, "next"):
-				parts.append("N NEXT")
+				parts.append("%s NEXT" % Actions.binding_label("media_next", 1).to_upper())
 			if _verb_allowed(player, "previous"):
-				parts.append("B PREV")
+				parts.append("%s PREV" % Actions.binding_label("media_previous", 1).to_upper())
 		if parts.is_empty():
 			parts.append("NO CONTROLS")
-	parts.append("P CLOSE")
+	parts.append("%s CLOSE" % Actions.binding_label("media_console", 1).to_upper())
 	_hint.text = "  ".join(parts)
 
 func _apply_row(

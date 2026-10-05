@@ -1,6 +1,7 @@
 extends StaticBody2D
 
 const PixelArt = preload("res://scripts/pixel_art.gd")
+const Actions = preload("res://scripts/input_actions.gd")
 
 signal status_changed(message: String, tone: String)
 
@@ -24,8 +25,9 @@ func _ready() -> void:
 	_refresh_sprite()
 
 func interaction_prompt() -> String:
+	var key := "[%s] " % Actions.binding_label("interact", 1).to_upper()
 	if registry_checked and application.is_empty():
-		return "[E] MISSING  " + display_name.to_upper()
+		return key + "MISSING  " + display_name.to_upper()
 	var running_suffix := ""
 	match running_state:
 		"running":
@@ -37,8 +39,8 @@ func interaction_prompt() -> String:
 		"not_running":
 			running_suffix = " // IDLE"
 	if retry_available:
-		return "[E] RETRY  " + application_label().to_upper() + running_suffix
-	return "[E] USE  " + application_label().to_upper() + running_suffix
+		return key + "RETRY  " + application_label().to_upper() + running_suffix
+	return key + "USE  " + application_label().to_upper() + running_suffix
 
 func apply_running_state(state: String, location := "", window_count := 0) -> void:
 	running_state = state

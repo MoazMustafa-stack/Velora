@@ -7,9 +7,13 @@ const Actions = preload("res://scripts/input_actions.gd")
 signal resume_requested
 signal replay_requested
 signal dismiss_requested
+signal preferences_changed
+signal reset_requested
 var page := "home"
 var backend_status: Label
 var _backend: Node
+var _settings: RefCounted
+var _feedback := ""
 var _shell: RefCounted
 var _cursor := Cursor.new(5)
 var _rows: Array[Label] = []
@@ -30,8 +34,9 @@ func _ready() -> void:
 	_shell.box.add_child(backend_status)
 	_shell.finish("")
 
-func configure(backend: Node) -> void:
+func configure(backend: Node, settings: RefCounted) -> void:
 	_backend = backend
+	_settings = settings
 	show_page("home")
 
 func open() -> void:
@@ -40,12 +45,13 @@ func open() -> void:
 
 func back() -> bool:
 	if page == "home": return false
-	show_page("home")
+	show_page("settings" if page in ["accessibility", "audio", "reset"] else "home")
 	return true
 
 func show_page(next: String) -> void:
-	if next not in ["home", "help", "diagnostics", "controls"]: return
+	if next not in ["home", "help", "diagnostics", "controls", "settings", "accessibility", "audio", "reset"]: return
 	page = next
+	_feedback = ""
 	_cursor.select(0, 1)
 	refresh()
 
@@ -55,7 +61,7 @@ func refresh() -> void:
 	_detail.text = ""
 	match page:
 		"home":
-			_items.assign(["RESUME", "HELP / CONTROLS", "CAPABILITY DIAGNOSTICS", "REPLAY FIRST-RUN HINTS", "SKIP FIRST-RUN HINTS"])
+			_items.assign(["RESUME", "HELP / CONTROLS", "CAPABILITY DIAGNOSTICS", "SETTINGS", "REPLAY FIRST-RUN HINTS"])
 		"help":
 			_items.assign(["%s/%s/%s/%s MOVE" % [Actions.binding_label("move_up", 1), Actions.binding_label("move_left", 1), Actions.binding_label("move_down", 1), Actions.binding_label("move_right", 1)],
 				"%s SPRINT // %s INTERACT" % [Actions.binding_label("sprint"), Actions.binding_label("interact")],
@@ -76,6 +82,19 @@ func refresh() -> void:
 				"TELEMETRY // " + _backend.telemetry_availability.to_upper(),
 				"MEDIA // " + _backend.media_availability.to_upper(), "NOTIFICATIONS // " + feed])
 			_detail.text = "STATUS ONLY // NO CONTENT OR LOG HISTORY"
+		"settings":
+			_items.assign(["ACCESSIBILITY", "LOCAL AUDIO PREFERENCES", "CONTROLS / CURRENT BINDINGS", "SKIP FIRST-RUN HINTS", "RESET UI PREFERENCES"])
+			_detail.text = "UI ONLY // NO LIVE DATA IS SAVED"
+		"accessibility":
+			_items.assign(["REDUCED MOTION // " + ("ON" if _settings.reduced_motion() else "OFF"), "BACK TO SETTINGS"])
+			_detail.text = "NO FLASHING // LABELS DO NOT RELY ON COLOR"
+		"audio":
+			_items.assign(["LOCAL MUTE // " + ("ON" if _settings.audio_muted() else "OFF"), "VOLUME // %d%%" % roundi(_settings.audio_volume() * 100), "BACK TO SETTINGS"])
+			_detail.text = "PREFERENCES ONLY // UI CUES ARRIVE IN D6.10"
+		"reset":
+			_items.assign(["CANCEL", "CONFIRM RESET // UI PREFERENCES ONLY"])
+			_detail.text = "NO CORE DATA OR SYSTEM CONFIG IS TOUCHED"
+	if not _feedback.is_empty(): _detail.text = _feedback
 	_cursor.select(_cursor.selected, _items.size())
 	for index in range(_rows.size()):
 		var item := _cursor.offset + index
@@ -91,6 +110,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		refresh()
 	elif Actions.pressed(event, "confirm"):
 		activate_selection()
+	elif page == "audio" and _cursor.selected == 1 and (Actions.pressed(event, "nav_left") or Actions.pressed(event, "nav_right")):
+		_settings.set_audio_volume(_settings.audio_volume() + (-0.1 if Actions.pressed(event, "nav_left") else 0.1))
+		preferences_changed.emit()
+		refresh()
 	else: return
 	get_viewport().set_input_as_handled()
 
@@ -101,7 +124,38 @@ func activate_selection() -> void:
 				0: resume_requested.emit()
 				1: show_page("help")
 				2: show_page("diagnostics")
-				3: replay_requested.emit()
-				4: dismiss_requested.emit()
+				3: show_page("settings")
+				4: replay_requested.emit()
 		"help":
 			if _cursor.selected == 4: show_page("controls")
+		"settings":
+			match _cursor.selected:
+				0: show_page("accessibility")
+				1: show_page("audio")
+				2: show_page("controls")
+				3: dismiss_requested.emit()
+				4: show_page("reset")
+		"accessibility":
+			if _cursor.selected == 0:
+				_settings.set_reduced_motion(not _settings.reduced_motion())
+				preferences_changed.emit()
+				refresh()
+			else: show_page("settings")
+		"audio":
+			match _cursor.selected:
+				0:
+					_settings.set_audio_muted(not _settings.audio_muted())
+					preferences_changed.emit()
+					refresh()
+				1:
+					_settings.set_audio_volume(float((roundi(_settings.audio_volume() * 10) + 1) % 11) / 10.0)
+					preferences_changed.emit()
+					refresh()
+				2: show_page("settings")
+		"reset":
+			if _cursor.selected == 1: reset_requested.emit()
+			else: show_page("settings")
+
+func set_feedback(message: String) -> void:
+	_feedback = message
+	refresh()

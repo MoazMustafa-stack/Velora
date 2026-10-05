@@ -94,6 +94,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func open() -> void:
 	visible = true
+	_refresh_hint()
 	_select_index(_default_selection())
 
 func close() -> void:
@@ -266,4 +267,8 @@ func _build_ui() -> void:
 	_shell.box.add_child(_rows_box)
 	for _row_index in range(MAX_VISIBLE_ENTRIES):
 		_rows.append(Shell.row(_rows_box))
-	_hint = _shell.finish("ARROWS SCROLL  N CLOSE")
+	_hint = _shell.finish("")
+	_refresh_hint()
+
+func _refresh_hint() -> void:
+	_hint.text = "%s/%s SCROLL  %s CLOSE" % [Actions.binding_label("nav_up", 1), Actions.binding_label("nav_down", 1), Actions.binding_label("notification_feed", 1)]

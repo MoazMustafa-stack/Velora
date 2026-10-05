@@ -44,11 +44,13 @@ func _ready() -> void:
 	onboarding.completed.connect(_complete_onboarding)
 	_last_player_position = player.position
 	_refresh_help()
-	pause_panel.configure(backend)
+	pause_panel.configure(backend, settings)
 	hud.attach_pause(pause_panel)
 	pause_panel.resume_requested.connect(func(): overlays.close(Overlay.Mode.PAUSE))
 	pause_panel.replay_requested.connect(func(): replay_onboarding(); overlays.close(Overlay.Mode.PAUSE))
 	pause_panel.dismiss_requested.connect(func(): onboarding.dismiss(); overlays.close(Overlay.Mode.PAUSE))
+	pause_panel.preferences_changed.connect(_on_preferences_changed)
+	pause_panel.reset_requested.connect(reset_preferences)
 	overlays = Overlay.new(player, hud, {
 		Overlay.Mode.PAUSE: pause_panel,
 		Overlay.Mode.WORKSPACES: workspace_map,
@@ -121,6 +123,24 @@ func _save_preferences() -> Error:
 	if preferences_error != OK:
 		hud.show_transient("SETTINGS NOT SAVED // CHECK ACCESS", "failure", 4.0)
 	return preferences_error
+
+func _on_preferences_changed() -> void:
+	if _save_preferences() != OK:
+		pause_panel.set_feedback("NOT SAVED // CHECK SETTINGS FILE ACCESS")
+	else:
+		pause_panel.set_feedback("SAVED // UI PREFERENCES ONLY")
+
+func reset_preferences() -> void:
+	# Disabled IO means reset is in-memory too, never delete the production file.
+	preferences_error = settings.reset() if load_preferences else OK
+	if preferences_error != OK:
+		pause_panel.set_feedback("RESET FAILED // ORIGINAL SETTINGS KEPT")
+		return
+	settings = Store.new(preferences_path)
+	pause_panel.configure(backend, settings)
+	onboarding.replay()
+	pause_panel.show_page("settings")
+	pause_panel.set_feedback("RESET COMPLETE // HINTS RESTART ON RESUME")
 
 func _on_core_state_changed(state: int) -> void:
 	var online := state == BackendClient.ConnectionState.READY
