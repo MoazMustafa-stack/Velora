@@ -6,6 +6,7 @@ func _initialize() -> void:
 func _run() -> void:
 	var main = load("res://scenes/main.tscn").instantiate()
 	main.get_node("BackendClient").auto_connect = false
+	main.load_preferences = false
 	root.add_child(main)
 	await process_frame
 	main.player.set_physics_process(false)

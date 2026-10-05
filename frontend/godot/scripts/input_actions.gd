@@ -36,3 +36,16 @@ static func pressed(event: InputEvent, action: StringName) -> bool:
 		event = event.duplicate()
 		event.physical_keycode = event.keycode
 	return event.is_action_pressed(action, false)
+
+static func binding_label(action: StringName, limit: int = 2) -> String:
+	var labels: Array[String] = []
+	for event in InputMap.action_get_events(action):
+		var text := event.as_text()
+		if event is InputEventKey:
+			text = event.as_text_physical_keycode() if event.physical_keycode != 0 else event.as_text_keycode()
+		text = text.replace(" (Physical)", "").replace("Escape", "Esc").replace("PageUp", "PgUp").replace("PageDown", "PgDn")
+		if text not in labels:
+			labels.append(text)
+		if labels.size() >= maxi(limit, 1):
+			break
+	return "/".join(labels) if not labels.is_empty() else "UNBOUND"

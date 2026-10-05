@@ -16,6 +16,7 @@ func _run() -> void:
 		return
 
 	var main := packed.instantiate()
+	main.load_preferences = false
 	root.add_child(main)
 	await process_frame
 	await process_frame

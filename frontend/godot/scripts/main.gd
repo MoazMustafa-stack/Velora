@@ -3,6 +3,16 @@ extends Node2D
 const Actions = preload("res://scripts/input_actions.gd")
 const Overlay = preload("res://ui/overlay_coordinator.gd")
 const SessionBinding = preload("res://scripts/session_binding.gd")
+const Store = preload("res://scripts/settings_store.gd")
+const Onboarding = preload("res://ui/onboarding.gd")
+
+# Tests and performance fixtures disable all preference IO, or inject a temp path.
+@export var load_preferences := true
+@export var preferences_path := Store.DEFAULT_PATH
+var settings: RefCounted
+var onboarding: RefCounted
+var preferences_error: Error = OK
+var _last_player_position := Vector2.ZERO
 
 @onready var player: CharacterBody2D = $World/Player
 @onready var backend: Node = $BackendClient
@@ -25,6 +35,14 @@ var _stations: Array[Node] = []
 
 func _ready() -> void:
 	Actions.ensure_registered()
+	settings = Store.new(preferences_path)
+	if load_preferences:
+		preferences_error = settings.load_settings()
+	onboarding = Onboarding.new(settings.onboarding_completed())
+	onboarding.changed.connect(_refresh_help)
+	onboarding.completed.connect(_complete_onboarding)
+	_last_player_position = player.position
+	_refresh_help()
 	overlays = Overlay.new(player, hud, {
 		Overlay.Mode.WORKSPACES: workspace_map,
 		Overlay.Mode.NOTIFICATIONS: notification_feed,
@@ -69,6 +87,31 @@ func _ready() -> void:
 		_on_applications_changed(backend.applications)
 	hud.set_status("VELORA // POCKET TERMINAL")
 	_on_core_state_changed(backend.state)
+	if preferences_error != OK:
+		hud.show_transient("SETTINGS INVALID // USING DEFAULTS", "waiting", 4.0)
+
+func _process(_delta: float) -> void:
+	if onboarding.active and overlays.current == Overlay.Mode.NONE and player.position != _last_player_position:
+		onboarding.observe("move")
+	_last_player_position = player.position
+
+func _refresh_help() -> void:
+	hud.set_help(onboarding.hint())
+
+func _complete_onboarding() -> void:
+	settings.set_onboarding_completed(true)
+	_save_preferences()
+
+func replay_onboarding() -> void:
+	settings.set_onboarding_completed(false)
+	onboarding.replay()
+	_save_preferences()
+
+func _save_preferences() -> Error:
+	preferences_error = settings.save_settings() if load_preferences else OK
+	if preferences_error != OK:
+		hud.show_transient("SETTINGS NOT SAVED // CHECK ACCESS", "failure", 4.0)
+	return preferences_error
 
 func _on_core_state_changed(state: int) -> void:
 	var online := state == BackendClient.ConnectionState.READY
@@ -94,12 +137,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_toggle_media_console()
 
 func _toggle_workspace_map() -> void:
+	onboarding.observe("map")
 	overlays.toggle(Overlay.Mode.WORKSPACES)
 
 func _on_map_closed() -> void:
 	overlays.close(Overlay.Mode.WORKSPACES)
 
 func _toggle_notification_feed() -> void:
+	onboarding.observe("feed")
 	if not feed_open:
 		backend.request_notifications()
 	overlays.toggle(Overlay.Mode.NOTIFICATIONS)
@@ -108,6 +153,7 @@ func _on_feed_closed() -> void:
 	overlays.close(Overlay.Mode.NOTIFICATIONS)
 
 func _toggle_media_console() -> void:
+	onboarding.observe("media")
 	if not media_open:
 		backend.request_media_snapshot()
 	overlays.toggle(Overlay.Mode.MEDIA)
@@ -190,6 +236,7 @@ func _on_launch_status_changed(
 
 func _on_interaction_requested(target: Node) -> void:
 	if target.has_method("interact"):
+		onboarding.observe("interact")
 		if "desktop_id" in target:
 			var registry_rejected: bool = (
 				"registry_checked" in target
@@ -217,4 +264,5 @@ func _toggle_menu() -> void:
 	if overlays.current != Overlay.Mode.NONE:
 		overlays.back()
 	else:
+		onboarding.observe("pause")
 		overlays.open(Overlay.Mode.PAUSE)

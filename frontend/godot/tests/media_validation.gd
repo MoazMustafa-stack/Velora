@@ -172,6 +172,7 @@ func _run_scene_wiring() -> void:
 	var scene_backend: BackendClient = main.get_node("BackendClient")
 	scene_backend.auto_connect = false
 	scene_backend.bridge_override = bridge
+	main.load_preferences = false
 	root.add_child(main)
 	main.backend.state = BackendClient.ConnectionState.READY
 	main._on_core_state_changed(BackendClient.ConnectionState.READY)

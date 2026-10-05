@@ -48,6 +48,7 @@ func _run() -> void:
 	var main: Node = main_scene.instantiate()
 	var scene_backend: BackendClient = main.get_node("BackendClient")
 	scene_backend.auto_connect = false
+	main.load_preferences = false
 	root.add_child(main)
 	main.backend.state = BackendClient.ConnectionState.READY
 	main._on_core_state_changed(BackendClient.ConnectionState.READY)

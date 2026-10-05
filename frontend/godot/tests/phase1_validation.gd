@@ -33,6 +33,7 @@ func _run() -> void:
 		quit(1)
 		return
 	var main := packed.instantiate()
+	main.load_preferences = false
 	root.add_child(main)
 	await _physics_frames(3)
 

@@ -92,13 +92,11 @@ func set_availability(next_availability: String) -> void:
 			_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
 			visible_workspaces.clear()
 			_cursor.select(-1, 0)
-			_refresh_grid()
 		"incompatible":
 			_title.text = "WORKSPACES // INCOMPATIBLE"
 			_title.add_theme_color_override("font_color", TONE_COLORS["failure"])
 			visible_workspaces.clear()
 			_cursor.select(-1, 0)
-			_refresh_grid()
 		_:
 			_title.text = "WORKSPACES // WAITING"
 			_title.add_theme_color_override("font_color", TONE_COLORS["waiting"])
@@ -123,9 +121,8 @@ func update_session(snapshot: Dictionary) -> void:
 		return int(a.get("index", 0)) < int(b.get("index", 0))
 	)
 	visible_workspaces = workspaces.slice(0, MAX_VISIBLE_WORKSPACES)
-	set_availability("available")
 	_cursor.preserve(visible_workspaces.map(func(workspace: Dictionary): return workspace["handle"]), selected_handle, _default_selection())
-	_refresh_grid()
+	set_availability("available")
 
 func _default_selection() -> int:
 	for index in range(visible_workspaces.size()):
