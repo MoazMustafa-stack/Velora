@@ -27,6 +27,7 @@ func run() -> void:
 	main.get_node("BackendClient").auto_connect = false
 	root.add_child(main)
 	await process_frame
+	main.backend.set_process(false)
 	await key(KEY_ESCAPE)
 	check(main.menu_open and main.pause_panel.visible and not main.player.input_enabled, "Keyboard pause owns modal input")
 	await key(KEY_DOWN)

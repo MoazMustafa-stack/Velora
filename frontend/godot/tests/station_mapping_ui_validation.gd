@@ -22,6 +22,7 @@ func run() -> void:
 	main.get_node("BackendClient").auto_connect = false
 	root.add_child(main)
 	await process_frame
+	main.backend.set_process(false)
 	var station = main.get_node("World/Objects/Workstation")
 	check(station.desktop_id == "missing.desktop" and station.registry_checked and not station.is_application_available(), "Missing saved mapping is unavailable before the first catalog")
 	main._on_interaction_requested(station)

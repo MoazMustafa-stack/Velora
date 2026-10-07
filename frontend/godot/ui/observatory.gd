@@ -11,7 +11,7 @@ var core_online := false
 
 func _ready() -> void:
 	visible = false
-	_shell = Shell.new(self, Tokens.PANEL_POSITION, Vector2(Tokens.PANEL_WIDTH, 0), 5, false)
+	_shell = Shell.new(self, Tokens.PANEL_POSITION, Vector2(Tokens.PANEL_WIDTH, 0), 4, false)
 	for _index in range(4): _rows.append(Shell.row(_shell.box))
 	_shell.finish("")
 	refresh()

@@ -2,6 +2,7 @@ extends SceneTree
 ## Synthetic viewport-only captures: no desktop, production settings or IPC.
 const Overlay = preload("res://ui/overlay_coordinator.gd")
 const Layout = preload("res://ui/hud_layout.gd")
+const Actions = preload("res://scripts/input_actions.gd")
 var failed := false
 var output := ""
 var hud: CanvasLayer
@@ -25,7 +26,10 @@ func run() -> void:
 	main.get_node("BackendClient").auto_connect = false
 	root.add_child(main)
 	await process_frame
+	# Fake READY state must never run heartbeat/reconnect timers on a real bridge.
+	main.backend.set_process(false)
 	hud = main.hud
+	main.ui_audio.enabled = false
 	main.player.set_physics_process(false)
 	main.backend.state = BackendClient.ConnectionState.READY
 	main._on_core_state_changed(main.backend.state)
@@ -74,9 +78,35 @@ func run() -> void:
 	main.overlays.open(Overlay.Mode.WORKSPACES)
 	await capture("workspaces-full", main.workspace_map._panel)
 	main.overlays.open(Overlay.Mode.PAUSE)
-	for page in ["home", "help", "diagnostics", "settings", "accessibility", "audio", "controls", "reset"]:
+	for page in ["home", "help", "diagnostics", "settings", "accessibility", "audio", "controls", "reset", "stations", "station_choice"]:
 		main.pause_panel.show_page(page)
 		await capture("pause-" + page, main.pause_panel._shell.panel)
+	main.pause_panel.show_page("controls")
+	main.pause_panel.activate_selection()
+	await capture("pause-remap-capture", main.pause_panel._shell.panel)
+	main.pause_panel.cancel_capture()
+	var apps: Array[Dictionary] = [{"id": "code.desktop", "name": "Fixture Editor"}, {"id": "firefox.desktop", "name": "Fixture Browser"}, {"id": "kitty.desktop", "name": "Fixture Terminal"}]
+	for index in range(500): apps.append({"id": "fixture-%d.desktop" % index, "name": "Long synthetic registry application ".repeat(10)})
+	main.backend.applications_changed.emit(apps)
+	main.pause_panel.show_page("station_choice")
+	main.pause_panel._cursor.select(main.pause_panel._items.size() - 1, main.pause_panel._items.size())
+	main.pause_panel.refresh()
+	await capture("station-chooser-500", main.pause_panel._shell.panel)
+	main.pause_panel.show_page("stations")
+	await capture("station-slots", main.pause_panel._shell.panel)
+	Actions.controller_labels = true
+	main._refresh_input_labels()
+	for page in ["help", "controls", "settings", "station_choice"]:
+		main.pause_panel.show_page(page)
+		await capture("controller-" + page, main.pause_panel._shell.panel)
+	Actions.controller_labels = false
+	main._refresh_input_labels()
+	main.overlays.open(Overlay.Mode.OBSERVATORY)
+	main.observatory.set_availability("available")
+	main.observatory.update_snapshot({"cpu": {"utilization_basis_points": 5023}, "memory": {"used_bytes": 1048576000, "total_bytes": 2097152000}, "disk": {"read_bytes_per_second": 999999999999}, "network": {"transmit_bytes_per_second": 999999999999}})
+	await capture("observatory-full", main.observatory._shell.panel)
+	main.observatory.set_core_online(false)
+	await capture("observatory-stale", main.observatory._shell.panel)
 	main.overlays.back()
 	main.settings.set_reduced_motion(true)
 	main._apply_preferences()

@@ -46,6 +46,7 @@ func run() -> void:
 	root.add_child(main)
 	await physics_frame
 	await physics_frame
+	main.backend.set_process(false)
 	main.ui_audio.enabled = false
 	if remapped:
 		for pair in [["move_up", KEY_I], ["move_down", KEY_K], ["move_left", KEY_J], ["move_right", KEY_L], ["sprint", KEY_CTRL], ["interact", KEY_F], ["menu", KEY_Q], ["workspace_map", KEY_G], ["notification_feed", KEY_U], ["media_console", KEY_O]]:
@@ -91,6 +92,9 @@ func run() -> void:
 	main.overlays.open(Overlay.Mode.OBSERVATORY)
 	main.backend.telemetry_snapshot_changed.emit({"cpu": {"utilization_basis_points": 1234}, "memory": {"used_bytes": 1048576, "total_bytes": 2097152}})
 	check(main.observatory._rows[0].summary.text.contains("12.3%"), "Observatory displays real normalized snapshot fields while paused")
+	await process_frame
+	await process_frame
+	check(Rect2(0, 0, 320, 180).encloses(main.observatory._shell.panel.get_rect()), "Observatory's actual panel bounds stay inside the canvas")
 	main.overlays.back()
 	main.queue_free()
 	await process_frame
