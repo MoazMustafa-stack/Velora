@@ -3,6 +3,7 @@ const Overlay = preload("res://ui/overlay_coordinator.gd")
 const Actions = preload("res://scripts/input_actions.gd")
 var failed := false
 var controller := OS.get_environment("VELORA_TEST_CONTROLLER") == "1"
+var remapped := OS.get_environment("VELORA_TEST_REMAPPED") == "1"
 
 func press(action: String, active: bool) -> void:
 	if controller:
@@ -11,8 +12,13 @@ func press(action: String, active: bool) -> void:
 		event.button_index = Actions.PAD_BUTTONS[action]
 		event.pressed = active
 		Input.parse_input_event(event)
-	elif active: Input.action_press(action)
-	else: Input.action_release(action)
+	else:
+		var keys := InputMap.action_get_events(action).filter(func(event): return event is InputEventKey)
+		var event := InputEventKey.new()
+		event.physical_keycode = keys[0].physical_keycode
+		event.keycode = event.physical_keycode
+		event.pressed = active
+		Input.parse_input_event(event)
 
 func check(value: bool, message: String) -> void:
 	if not value: failed = true; push_error(message)
@@ -40,6 +46,10 @@ func run() -> void:
 	root.add_child(main)
 	await physics_frame
 	await physics_frame
+	main.ui_audio.enabled = false
+	if remapped:
+		for pair in [["move_up", KEY_I], ["move_down", KEY_K], ["move_left", KEY_J], ["move_right", KEY_L], ["sprint", KEY_CTRL], ["interact", KEY_F], ["menu", KEY_Q], ["workspace_map", KEY_G], ["notification_feed", KEY_U], ["media_console", KEY_O]]:
+			main._on_binding_requested(pair[0], [pair[1]])
 	var targets: Array[Node] = []
 	targets.assign(get_nodes_in_group("application_stations") + get_nodes_in_group("hub_objects"))
 	check(targets.size() == 7, "Three application stations and four capability objects exist")
@@ -56,16 +66,12 @@ func run() -> void:
 			await drive(main.player, Vector2(target.position.x, 82))
 		else:
 			await drive(main.player, Vector2(target.position.x, 136))
-		if controller:
-			# Face using actual pad input and flush its release before inspection.
-			press("move_up", true)
-			await physics_frame
-			await process_frame
-			press("move_up", false)
-			await process_frame
-		else:
-			main.player.facing = Vector2.UP
-			main.player._update_detector_position()
+		# Face using actual input and flush its release before inspection.
+		press("move_up", true)
+		await physics_frame
+		await process_frame
+		press("move_up", false)
+		await process_frame
 		await physics_frame
 		await physics_frame
 		main.player.refresh_interaction()
@@ -73,12 +79,10 @@ func run() -> void:
 		main.player.refresh_interaction()
 		check(main.player.active_interactable == target, "Target selection is stable")
 		if not "desktop_id" in target:
-			if controller:
-				press("interact", true)
-				await process_frame
-				press("interact", false)
-				await process_frame
-			else: main._on_interaction_requested(target)
+			press("interact", true)
+			await process_frame
+			press("interact", false)
+			await process_frame
 			check(main.overlays.current != Overlay.Mode.NONE and not main.player.input_enabled, "Object opens a functional modal: " + target.name)
 			check(main.backend.last_requested_desktop_id.is_empty(), "Capability object never requests an application launch")
 			main.overlays.back()
@@ -91,5 +95,5 @@ func run() -> void:
 	main.queue_free()
 	await process_frame
 	if controller: Actions.release_controller(42)
-	if not failed: print("D6.05/D6.11 ", "controller" if controller else "keyboard", " reachability and world layout validation passed")
+	if not failed: print("D6.05/D6.11 ", "controller" if controller else "remapped keyboard" if remapped else "keyboard", " reachability and world layout validation passed")
 	quit(1 if failed else 0)
