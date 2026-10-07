@@ -30,8 +30,11 @@ func _ready() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if Actions.pressed(event, "menu"):
+		get_viewport().set_input_as_handled()
 		menu_requested.emit()
 	elif input_enabled and Actions.pressed(event, "interact") and active_interactable:
+		# Do not let this same press also confirm in the newly opened modal.
+		get_viewport().set_input_as_handled()
 		interaction_requested.emit(active_interactable)
 
 func _physics_process(delta: float) -> void:

@@ -1,6 +1,18 @@
 extends SceneTree
 const Overlay = preload("res://ui/overlay_coordinator.gd")
+const Actions = preload("res://scripts/input_actions.gd")
 var failed := false
+var controller := OS.get_environment("VELORA_TEST_CONTROLLER") == "1"
+
+func press(action: String, active: bool) -> void:
+	if controller:
+		var event := InputEventJoypadButton.new()
+		event.device = 42
+		event.button_index = Actions.PAD_BUTTONS[action]
+		event.pressed = active
+		Input.parse_input_event(event)
+	elif active: Input.action_press(action)
+	else: Input.action_release(action)
 
 func check(value: bool, message: String) -> void:
 	if not value: failed = true; push_error(message)
@@ -15,9 +27,9 @@ func drive(player: CharacterBody2D, destination: Vector2) -> void:
 		while absf(player.position[axis] - destination[axis]) > 1.0 and ticks < 200:
 			var positive := destination[axis] > player.position[axis]
 			var action := ("move_down" if positive else "move_up") if axis == 1 else ("move_right" if positive else "move_left")
-			Input.action_press(action)
+			press(action, true)
 			await physics_frame
-			Input.action_release(action)
+			press(action, false)
 			ticks += 1
 		check(ticks < 200, "Keyboard lane is unobstructed: " + str(destination))
 
@@ -44,16 +56,29 @@ func run() -> void:
 			await drive(main.player, Vector2(target.position.x, 82))
 		else:
 			await drive(main.player, Vector2(target.position.x, 136))
-		main.player.facing = Vector2.UP
-		main.player._update_detector_position()
+		if controller:
+			# Face using actual pad input and flush its release before inspection.
+			press("move_up", true)
+			await physics_frame
+			await process_frame
+			press("move_up", false)
+			await process_frame
+		else:
+			main.player.facing = Vector2.UP
+			main.player._update_detector_position()
 		await physics_frame
 		await physics_frame
 		main.player.refresh_interaction()
-		check(main.player.active_interactable == target, "Facing selects exact reachable object: " + target.name)
+		check(main.player.active_interactable == target, "Facing selects exact reachable object: " + target.name + " position=" + str(main.player.position) + " facing=" + str(main.player.facing))
 		main.player.refresh_interaction()
 		check(main.player.active_interactable == target, "Target selection is stable")
 		if not "desktop_id" in target:
-			main._on_interaction_requested(target)
+			if controller:
+				press("interact", true)
+				await process_frame
+				press("interact", false)
+				await process_frame
+			else: main._on_interaction_requested(target)
 			check(main.overlays.current != Overlay.Mode.NONE and not main.player.input_enabled, "Object opens a functional modal: " + target.name)
 			check(main.backend.last_requested_desktop_id.is_empty(), "Capability object never requests an application launch")
 			main.overlays.back()
@@ -65,5 +90,6 @@ func run() -> void:
 	main.overlays.back()
 	main.queue_free()
 	await process_frame
-	if not failed: print("D6.05 keyboard reachability and world layout validation passed")
+	if controller: Actions.release_controller(42)
+	if not failed: print("D6.05/D6.11 ", "controller" if controller else "keyboard", " reachability and world layout validation passed")
 	quit(1 if failed else 0)

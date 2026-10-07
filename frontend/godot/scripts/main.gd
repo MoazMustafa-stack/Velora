@@ -40,6 +40,7 @@ var _stations: Array[Node] = []
 
 func _ready() -> void:
 	Actions.ensure_registered()
+	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	settings = Store.new(preferences_path)
 	if load_preferences:
 		preferences_error = settings.load_settings()
@@ -207,6 +208,12 @@ func _on_hub_object_activated(kind: String) -> void:
 			overlays.open(Overlay.Mode.OBSERVATORY)
 
 func _input(event: InputEvent) -> void:
+	if Actions.observe_input(event): _refresh_input_labels()
+	if pause_panel.capturing_key and not event is InputEventKey:
+		if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):
+			pause_panel.cancel_capture()
+		get_viewport().set_input_as_handled()
+		return
 	if pause_panel.capturing_key and event is InputEventKey:
 		get_viewport().set_input_as_handled()
 		pause_panel.capture_key(event)
@@ -214,6 +221,22 @@ func _input(event: InputEvent) -> void:
 	if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):
 		get_viewport().set_input_as_handled()
 		_toggle_menu()
+
+func _refresh_input_labels() -> void:
+	_refresh_help()
+	player.refresh_interaction()
+	pause_panel.refresh()
+	for panel in [workspace_map, notification_feed, media_console]: panel._refresh_hint()
+	observatory.refresh()
+
+func _on_joy_connection_changed(device: int, connected: bool) -> void:
+	if connected: return
+	var was_active := Actions.active_device == device
+	Actions.release_controller(device)
+	if was_active:
+		player.velocity = Vector2.ZERO
+		_refresh_input_labels()
+		hud.show_transient("CONTROLLER LOST // KEYBOARD READY", "waiting", 3.0)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if overlays.current != Overlay.Mode.NONE:

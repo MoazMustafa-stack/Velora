@@ -45,6 +45,10 @@ static func apply(settings: RefCounted) -> bool:
 	Actions.ensure_registered()
 	for action in Actions.DEFAULTS:
 		# Reset only keys, leaving fixed controller events intact.
+		var current: Array[int] = []
+		for event in InputMap.action_get_events(action):
+			if event is InputEventKey: current.append(event.physical_keycode if event.physical_keycode != 0 else event.keycode)
+		if current == bindings[action]: continue
 		for event in InputMap.action_get_events(action):
 			if event is InputEventKey: InputMap.action_erase_event(action, event)
 		for key in bindings[action]:

@@ -123,6 +123,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		ui_cue_requested.emit("navigate")
 	elif Actions.pressed(event, "confirm"):
 		activate_selection()
+	elif Actions.pressed(event, "first") or Actions.pressed(event, "last"):
+		_cursor.select(0 if Actions.pressed(event, "first") else _items.size() - 1, _items.size())
+		refresh()
+		ui_cue_requested.emit("navigate")
+	elif Actions.pressed(event, "page_up") or Actions.pressed(event, "page_down"):
+		_cursor.move(-5 if Actions.pressed(event, "page_up") else 5, _items.size())
+		refresh()
+		ui_cue_requested.emit("navigate")
 	elif page == "audio" and _cursor.selected == 1 and (Actions.pressed(event, "nav_left") or Actions.pressed(event, "nav_right")):
 		_settings.set_audio_volume(_settings.audio_volume() + (-0.1 if Actions.pressed(event, "nav_left") else 0.1))
 		preferences_changed.emit()
