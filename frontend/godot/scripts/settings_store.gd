@@ -73,6 +73,9 @@ func set_station_desktop_id(slot: String, desktop_id: String) -> bool:
 	_stations[slot] = desktop_id
 	return true
 
+func clear_station_mappings() -> void:
+	_stations.clear()
+
 func load_settings() -> Error:
 	_defaults()
 	if not FileAccess.file_exists(_path):
