@@ -1,7 +1,7 @@
 extends RefCounted
 ## Single owner of modal state, world input lock and focus restoration.
 
-enum Mode { NONE, PAUSE, WORKSPACES, NOTIFICATIONS, MEDIA }
+enum Mode { NONE, PAUSE, WORKSPACES, NOTIFICATIONS, MEDIA, OBSERVATORY }
 
 var _mode: Mode = Mode.NONE
 var current: Mode:
@@ -17,7 +17,7 @@ func _init(player: CharacterBody2D, hud: CanvasLayer, panels: Dictionary) -> voi
 	_panels = panels
 
 func open(mode: Mode) -> void:
-	if mode == _mode or mode < Mode.NONE or mode > Mode.MEDIA:
+	if mode == _mode or mode < Mode.NONE or mode > Mode.OBSERVATORY:
 		return
 	var was_world := _mode == Mode.NONE
 	_mode = mode

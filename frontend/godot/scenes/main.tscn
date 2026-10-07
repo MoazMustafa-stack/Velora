@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene load_steps=15 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/backend_client.gd" id="2_backend"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://ui/media_console.gd" id="9_media_console"]
 
 [ext_resource type="Script" path="res://ui/pause_panel.gd" id="10_pause"]
+[ext_resource type="Script" path="res://ui/observatory.gd" id="11_observatory"]
 
 [sub_resource type="RectangleShape2D" id="Shape_player"]
 size = Vector2(10, 8)
@@ -231,3 +232,8 @@ script = ExtResource("9_media_console")
 layer = 5
 visible = false
 script = ExtResource("10_pause")
+
+[node name="Observatory" type="CanvasLayer" parent="."]
+layer = 6
+visible = false
+script = ExtResource("11_observatory")

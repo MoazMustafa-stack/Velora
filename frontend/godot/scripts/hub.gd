@@ -3,6 +3,8 @@ extends Node2D
 const ROOM_WIDTH := 20
 const ROOM_HEIGHT := 12
 const PixelArt = preload("res://scripts/pixel_art.gd")
+const HubObject = preload("res://scripts/hub_object.gd")
+const OBJECT_LAYOUT := {"map": Vector2(64, 104), "media": Vector2(112, 104), "notifications": Vector2(208, 104), "observatory": Vector2(256, 104)}
 
 @onready var ground: TileMapLayer = $Ground
 @onready var walls: TileMapLayer = $Walls
@@ -33,3 +35,12 @@ func _ready() -> void:
 		details.set_cell(Vector2i(x, 4), source_id, Vector2i(2, 0))
 	details.set_cell(Vector2i(9, ROOM_HEIGHT - 2), source_id, Vector2i(3, 0))
 	details.set_cell(Vector2i(10, ROOM_HEIGHT - 2), source_id, Vector2i(3, 0))
+	# Two horizontal approach lanes join a clear 32px central corridor.
+	for x in range(3, 17):
+		details.set_cell(Vector2i(x, 8), source_id, Vector2i(2, 0))
+	for kind in OBJECT_LAYOUT:
+		var object := HubObject.new()
+		object.name = kind.capitalize() + "Object"
+		object.object_kind = kind
+		object.position = OBJECT_LAYOUT[kind]
+		$Objects.add_child(object)

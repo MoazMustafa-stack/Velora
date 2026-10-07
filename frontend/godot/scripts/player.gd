@@ -120,7 +120,7 @@ func _update_interaction() -> void:
 		if not candidate.has_method("interact") or not candidate.has_method("interaction_prompt"):
 			continue
 		var distance := global_position.distance_squared_to(candidate.global_position)
-		if distance < closest_distance:
+		if distance < closest_distance or (is_equal_approx(distance, closest_distance) and closest != null and String(candidate.get_path()) < String(closest.get_path())):
 			closest = candidate
 			closest_distance = distance
 	active_interactable = closest

@@ -21,6 +21,7 @@ var _last_player_position := Vector2.ZERO
 @onready var notification_feed: CanvasLayer = $NotificationFeed
 @onready var media_console: CanvasLayer = $MediaConsole
 @onready var pause_panel: CanvasLayer = $PausePanel
+@onready var observatory: CanvasLayer = $Observatory
 
 var overlays: RefCounted
 # Read-only compatibility views; the coordinator is the only state owner.
@@ -57,10 +58,14 @@ func _ready() -> void:
 		Overlay.Mode.WORKSPACES: workspace_map,
 		Overlay.Mode.NOTIFICATIONS: notification_feed,
 		Overlay.Mode.MEDIA: media_console,
+		Overlay.Mode.OBSERVATORY: observatory,
 	})
 	player.interaction_changed.connect(hud.set_interaction_prompt)
 	player.interaction_requested.connect(_on_interaction_requested)
 	player.menu_requested.connect(_toggle_menu)
+	for object in get_tree().get_nodes_in_group("hub_objects"):
+		object.activated.connect(_on_hub_object_activated)
+	observatory.observatory_closed.connect(func(): overlays.close(Overlay.Mode.OBSERVATORY))
 	for station in get_tree().get_nodes_in_group("application_stations"):
 		_stations.append(station)
 		station.status_changed.connect(_on_station_status_changed)
@@ -71,6 +76,8 @@ func _ready() -> void:
 	backend.session_availability_changed.connect(_on_session_availability_changed)
 	backend.telemetry_snapshot_changed.connect(hud.set_telemetry_snapshot)
 	backend.telemetry_availability_changed.connect(hud.set_telemetry_availability)
+	backend.telemetry_snapshot_changed.connect(observatory.update_snapshot)
+	backend.telemetry_availability_changed.connect(observatory.set_availability)
 	backend.notification_feed_changed.connect(notification_feed.update_feed)
 	backend.notifications_availability_changed.connect(notification_feed.set_availability)
 	backend.notifications_policy_changed.connect(notification_feed.set_policy_disabled)
@@ -150,9 +157,18 @@ func reset_preferences() -> void:
 
 func _on_core_state_changed(state: int) -> void:
 	var online := state == BackendClient.ConnectionState.READY
-	for panel in [workspace_map, notification_feed, media_console]:
+	for panel in [workspace_map, notification_feed, media_console, observatory]:
 		panel.set_core_online(online)
 	pause_panel.refresh()
+
+func _on_hub_object_activated(kind: String) -> void:
+	match kind:
+		"map": _toggle_workspace_map()
+		"media": _toggle_media_console()
+		"notifications": _toggle_notification_feed()
+		"observatory":
+			backend.request_telemetry_snapshot()
+			overlays.open(Overlay.Mode.OBSERVATORY)
 
 func _input(event: InputEvent) -> void:
 	if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):
