@@ -27,7 +27,9 @@ func run() -> void:
 	check(station.desktop_id == "missing.desktop" and station.registry_checked and not station.is_application_available(), "Missing saved mapping is unavailable before the first catalog")
 	main._on_interaction_requested(station)
 	check(main.backend.last_requested_desktop_id.is_empty(), "Unknown saved mapping never creates a launch request")
-	var fixture := [{"id": "safe.desktop", "name": "Safe\nApp", "startup_wm_class": "SafeApp"}, {"id": "code.desktop", "name": "Editor"}]
+	var fixture := [{"id": "safe.desktop", "name": "Safe\nApp", "startup_wm_class": "SafeApp", "exec": "/usr/bin/safeapp"}, {"id": "code.desktop", "name": "Editor"}]
+	main.backend.session_availability = "available"
+	main.backend.session_snapshot = {"sequence": 1, "workspaces": [{"handle": "workspace:1", "name": "7"}], "windows": [{"handle": "window:1", "class": "safeapp", "workspace_handle": "workspace:1"}]}
 	main.backend.applications.assign(fixture)
 	main.backend.applications_changed.emit(fixture)
 	main._toggle_menu()
@@ -45,6 +47,11 @@ func run() -> void:
 	check(station.desktop_id == "safe.desktop" and station.is_application_available(), "Known live registry choice maps the fixed slot")
 	check(station.application_label() == "Safe App", "Application name cannot introduce multiline prompt overflow")
 	check(station.application.startup_wm_class == "SafeApp", "Running-state matching metadata remains intact")
+	check(station.running_state == "running" and station.running_location == "7", "Mapping immediately uses the last useful session snapshot")
+	station.apply_launch_feedback("launching_application", "", false)
+	main.settings.set_audio_volume(0.7)
+	main._on_preferences_changed()
+	check(station.status == "attention", "Unrelated preferences cannot erase pending launch feedback")
 	var restored := Store.new(path)
 	check(restored.load_settings() == OK and restored.station_desktop_id("editor") == "safe.desktop", "Only desktop ID is persisted")
 	var saved := FileAccess.get_file_as_string(path)

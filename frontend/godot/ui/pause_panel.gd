@@ -124,6 +124,8 @@ func refresh() -> void:
 			_items.assign(["USE DEFAULT // " + Mappings.DEFAULTS[_mapping_slot]])
 			for choice in _choices: _items.append(choice.name)
 			_detail.text = "CORE OFFLINE // START CORE TO CHOOSE" if _backend.state != BackendClient.ConnectionState.READY else "NO APPLICATIONS // CHECK DESKTOP ENTRIES" if _choices.is_empty() else "REGISTRY ONLY // %d CHOICES (MAX 512)" % _choices.size()
+			if _backend.state == BackendClient.ConnectionState.READY and _cursor.selected > 0 and _cursor.selected - 1 < _choices.size():
+				_detail.text = "ID // " + String(_choices[_cursor.selected - 1].id)
 	if not _feedback.is_empty(): _detail.text = _feedback
 	_cursor.select(_cursor.selected, _items.size())
 	for index in range(_rows.size()):

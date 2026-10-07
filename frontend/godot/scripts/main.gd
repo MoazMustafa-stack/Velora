@@ -173,6 +173,7 @@ func _apply_preferences() -> void:
 		hud.show_transient("STATION ID INVALID // DEFAULT USED", "waiting", 4.0)
 
 func _apply_station_mappings() -> void:
+	var changed := false
 	for station in _stations:
 		var slot: String = station.station_slot
 		var target_id: String = Mappings.desktop_id(settings, slot)
@@ -181,6 +182,7 @@ func _apply_station_mappings() -> void:
 		if station.desktop_id == target_id and station.registry_checked == checked and station.application == application:
 			continue
 		station.desktop_id = target_id
+		changed = true
 		# A saved but unknown ID is unavailable even before the first catalog.
 		if checked:
 			station.bind_application(application)
@@ -191,6 +193,7 @@ func _apply_station_mappings() -> void:
 			station.retry_available = false
 			station._refresh_sprite()
 	if player.input_enabled: player.refresh_interaction()
+	if changed: _refresh_station_running_states(backend.session_snapshot)
 
 func _on_station_mapping_requested(slot: String, id: String) -> void:
 	var problem := "INVALID SLOT" if not Mappings.DEFAULTS.has(slot) else ""
@@ -205,7 +208,6 @@ func _on_station_mapping_requested(slot: String, id: String) -> void:
 	_on_preferences_changed()
 	pause_panel.show_page("stations")
 	pause_panel.set_feedback("STATION MAPPED // CORE STILL VALIDATES LAUNCH")
-	_refresh_station_running_states(backend.session_snapshot)
 
 func _reset_station_mappings() -> void:
 	settings.clear_station_mappings()
