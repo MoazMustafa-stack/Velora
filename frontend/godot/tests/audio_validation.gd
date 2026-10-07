@@ -25,6 +25,8 @@ func run() -> void:
 	check(audio.volume == 1.0 and AudioServer.get_bus_volume_db(0) == before, "Volume is bounded without changing Master")
 	audio.queue_free()
 	await process_frame
+	# Give the audio thread one mix cycle to release stopped playback resources.
+	await create_timer(0.12).timeout
 	check(AudioServer.get_bus_index(Audio.BUS) == -1, "Audio owns and cleans up only its local bus")
 	if not failed: print("D6.10 bounded local audio validation passed")
 	quit(1 if failed else 0)

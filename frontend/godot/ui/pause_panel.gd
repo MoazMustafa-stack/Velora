@@ -9,6 +9,7 @@ signal replay_requested
 signal dismiss_requested
 signal preferences_changed
 signal reset_requested
+signal ui_cue_requested(kind: String)
 var page := "home"
 var backend_status: Label
 var _backend: Node
@@ -90,7 +91,7 @@ func refresh() -> void:
 			_detail.text = "NO FLASHING // LABELS DO NOT RELY ON COLOR"
 		"audio":
 			_items.assign(["LOCAL MUTE // " + ("ON" if _settings.audio_muted() else "OFF"), "VOLUME // %d%%" % roundi(_settings.audio_volume() * 100), "BACK TO SETTINGS"])
-			_detail.text = "PREFERENCES ONLY // UI CUES ARRIVE IN D6.10"
+			_detail.text = "VELORA UI ONLY // SYSTEM MIXER UNCHANGED"
 		"reset":
 			_items.assign(["CANCEL", "CONFIRM RESET // UI PREFERENCES ONLY"])
 			_detail.text = "NO CORE DATA OR SYSTEM CONFIG IS TOUCHED"
@@ -108,6 +109,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if Actions.pressed(event, "nav_up") or Actions.pressed(event, "nav_down"):
 		_cursor.move(-1 if Actions.pressed(event, "nav_up") else 1, _items.size())
 		refresh()
+		ui_cue_requested.emit("navigate")
 	elif Actions.pressed(event, "confirm"):
 		activate_selection()
 	elif page == "audio" and _cursor.selected == 1 and (Actions.pressed(event, "nav_left") or Actions.pressed(event, "nav_right")):
@@ -118,6 +120,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 func activate_selection() -> void:
+	if page in ["home", "help", "settings", "reset"] and (page != "help" or _cursor.selected == 4):
+		ui_cue_requested.emit("confirm")
 	match page:
 		"home":
 			match _cursor.selected:

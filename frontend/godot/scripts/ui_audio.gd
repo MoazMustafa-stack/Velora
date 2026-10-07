@@ -57,7 +57,10 @@ func play_cue(kind: String) -> bool:
 	return true
 
 func _exit_tree() -> void:
-	for voice in _voices: voice.stop()
+	for voice in _voices:
+		voice.stop()
+		voice.stream = null
+	_streams.clear()
 	var index := AudioServer.get_bus_index(BUS)
 	if _owns_bus and index >= 0: AudioServer.remove_bus(index)
 

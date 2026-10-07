@@ -5,6 +5,7 @@ const Overlay = preload("res://ui/overlay_coordinator.gd")
 const SessionBinding = preload("res://scripts/session_binding.gd")
 const Store = preload("res://scripts/settings_store.gd")
 const Onboarding = preload("res://ui/onboarding.gd")
+const UiAudio = preload("res://scripts/ui_audio.gd")
 
 # Tests and performance fixtures disable all preference IO, or inject a temp path.
 @export var load_preferences := true
@@ -13,6 +14,7 @@ var settings: RefCounted
 var onboarding: RefCounted
 var preferences_error: Error = OK
 var _last_player_position := Vector2.ZERO
+var ui_audio: Node
 
 @onready var player: CharacterBody2D = $World/Player
 @onready var backend: Node = $BackendClient
@@ -40,6 +42,8 @@ func _ready() -> void:
 	settings = Store.new(preferences_path)
 	if load_preferences:
 		preferences_error = settings.load_settings()
+	ui_audio = UiAudio.new()
+	add_child(ui_audio)
 	_apply_preferences()
 	onboarding = Onboarding.new(settings.onboarding_completed())
 	onboarding.changed.connect(_refresh_help)
@@ -53,6 +57,8 @@ func _ready() -> void:
 	pause_panel.dismiss_requested.connect(func(): onboarding.dismiss(); overlays.close(Overlay.Mode.PAUSE))
 	pause_panel.preferences_changed.connect(_on_preferences_changed)
 	pause_panel.reset_requested.connect(reset_preferences)
+	for panel in [pause_panel, workspace_map, notification_feed, media_console]:
+		panel.ui_cue_requested.connect(ui_audio.play_cue)
 	overlays = Overlay.new(player, hud, {
 		Overlay.Mode.PAUSE: pause_panel,
 		Overlay.Mode.WORKSPACES: workspace_map,
@@ -93,13 +99,16 @@ func _ready() -> void:
 	backend.media_availability_changed.connect(media_console.set_availability)
 	backend.media_control_accepted.connect(media_console.apply_control_accepted)
 	backend.media_control_rejected.connect(media_console.apply_control_rejected)
+	backend.media_control_rejected.connect(func(_handle, _verb, _code, _message, _retryable): ui_audio.play_cue("reject"))
 	media_console.control_requested.connect(backend.send_media_control)
+	media_console.control_requested.connect(func(_handle, _verb): ui_audio.play_cue("media"))
 	media_console.console_closed.connect(_on_media_console_closed)
 	media_console.set_availability(backend.media_availability)
 	if not backend.media_snapshot.is_empty():
 		media_console.update_media(backend.media_snapshot)
 	workspace_map.map_closed.connect(_on_map_closed)
 	workspace_map.switch_requested.connect(backend.request_switch_workspace)
+	workspace_map.switch_requested.connect(func(_handle): ui_audio.play_cue("confirm"))
 	if backend.session_availability != "unknown":
 		_on_session_availability_changed(backend.session_availability)
 	if not backend.applications.is_empty():
@@ -135,12 +144,15 @@ func _save_preferences() -> Error:
 func _on_preferences_changed() -> void:
 	_apply_preferences()
 	if _save_preferences() != OK:
+		ui_audio.play_cue("reject")
 		pause_panel.set_feedback("NOT SAVED // CHECK SETTINGS FILE ACCESS")
 	else:
+		ui_audio.play_cue("confirm")
 		pause_panel.set_feedback("SAVED // UI PREFERENCES ONLY")
 
 func _apply_preferences() -> void:
 	player.set_reduced_motion(settings.reduced_motion())
+	if ui_audio != null: ui_audio.configure(settings.audio_muted(), settings.audio_volume())
 
 func reset_preferences() -> void:
 	# Disabled IO means reset is in-memory too, never delete the production file.
@@ -249,6 +261,7 @@ func _refresh_station_running_states(snapshot: Dictionary) -> void:
 		)
 
 func _on_station_status_changed(message: String, tone: String) -> void:
+	if tone == "failure": ui_audio.play_cue("reject")
 	hud.show_transient(message, tone, 3.0)
 
 func _on_backend_ux_status(
@@ -282,6 +295,8 @@ func _on_launch_status_changed(
 	message: String,
 	retryable: bool
 ) -> void:
+	if stage in ["launch_successful", "launch_failed"]:
+		ui_audio.play_cue("confirm" if stage == "launch_successful" else "reject")
 	for station in _stations:
 		if "desktop_id" in station and station.desktop_id == desktop_id:
 			station.apply_launch_feedback(stage, message, retryable)
@@ -289,6 +304,7 @@ func _on_launch_status_changed(
 
 func _on_interaction_requested(target: Node) -> void:
 	if target.has_method("interact"):
+		ui_audio.play_cue("interact")
 		onboarding.observe("interact")
 		if "desktop_id" in target:
 			var registry_rejected: bool = (
@@ -314,6 +330,7 @@ func _on_applications_changed(applications: Array) -> void:
 			station.bind_application(applications_by_id.get(station.desktop_id, {}))
 
 func _toggle_menu() -> void:
+	ui_audio.play_cue("confirm")
 	if overlays.current != Overlay.Mode.NONE:
 		if menu_open and pause_panel.back(): return
 		overlays.back()

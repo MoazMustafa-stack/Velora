@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+signal ui_cue_requested(kind: String)
+
 const Actions = preload("res://scripts/input_actions.gd")
 const Shell = preload("res://ui/panel_shell.gd")
 const Cursor = preload("res://ui/list_cursor.gd")
@@ -37,6 +39,7 @@ func _ready() -> void:
 	_build_ui()
 
 func _unhandled_input(event: InputEvent) -> void:
+	var previous_selection := selected_index
 	if not visible:
 		return
 	if Actions.pressed(event, "back") or Actions.pressed(event, "workspace_map"):
@@ -63,8 +66,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif Actions.pressed(event, "confirm"):
 		get_viewport().set_input_as_handled()
 		_confirm_selection()
+	if selected_index != previous_selection:
+		ui_cue_requested.emit("navigate")
 
 func open() -> void:
+	# Input selection cues never fire for background snapshot updates.
 	visible = true
 	_refresh_hint()
 	_select_index(_default_selection())
