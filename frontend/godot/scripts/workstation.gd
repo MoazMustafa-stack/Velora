@@ -7,6 +7,7 @@ signal status_changed(message: String, tone: String)
 
 @export var desktop_id := "code.desktop"
 @export var display_name := "VS CODE"
+@export_enum("editor", "browser", "terminal") var station_slot := "editor"
 @export_enum("code", "browser", "terminal") var station_kind := "code"
 @export var accent := Color("41d6c3")
 
@@ -20,14 +21,16 @@ var retry_available := false
 var running_state := "unknown"
 var running_location := ""
 var running_window_count := 0
+var _default_id := ""
 
 func _ready() -> void:
+	_default_id = desktop_id
 	_refresh_sprite()
 
 func interaction_prompt() -> String:
 	var key := "[%s] " % Actions.binding_label("interact", 1).to_upper()
 	if registry_checked and application.is_empty():
-		return key + "MISSING  " + display_name.to_upper()
+		return key + "MISSING  " + application_label().to_upper()
 	var running_suffix := ""
 	match running_state:
 		"running":
@@ -75,7 +78,8 @@ func is_application_available() -> bool:
 	return not application.is_empty()
 
 func application_label() -> String:
-	return display_name if application.is_empty() else String(application.get("name", display_name))
+	var label := (display_name if desktop_id == _default_id else desktop_id) if application.is_empty() else String(application.get("name", display_name))
+	return label.replace("\n", " ").replace("\r", " ").replace("\t", " ").left(128)
 
 func apply_launch_feedback(stage: String, _message: String, retryable: bool) -> void:
 	match stage:

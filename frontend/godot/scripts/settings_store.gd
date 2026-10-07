@@ -21,6 +21,7 @@ var _muted := false
 var _volume := 0.5
 var _bindings: Dictionary = {}
 var _stations: Dictionary = {}
+var _invalid_station_slots: Array[String] = []
 
 func _init(path: String = DEFAULT_PATH) -> void:
 	_path = path
@@ -71,10 +72,20 @@ func set_station_desktop_id(slot: String, desktop_id: String) -> bool:
 	if slot not in SLOTS or not _valid_desktop_id(desktop_id):
 		return false
 	_stations[slot] = desktop_id
+	_invalid_station_slots.erase(slot)
 	return true
+
+func invalid_station_slots() -> Array[String]:
+	return _invalid_station_slots.duplicate()
 
 func clear_station_mappings() -> void:
 	_stations.clear()
+	_invalid_station_slots.clear()
+
+func clear_station_mapping(slot: String) -> void:
+	if slot in SLOTS:
+		_stations.erase(slot)
+		_invalid_station_slots.erase(slot)
 
 func load_settings() -> Error:
 	_defaults()
@@ -109,8 +120,9 @@ func load_settings() -> Error:
 				set_action_keys(action, data.bindings[action])
 	if data.get("stations") is Dictionary:
 		for slot in SLOTS:
-			if data.stations.get(slot) is String:
-				set_station_desktop_id(slot, data.stations[slot])
+			if data.stations.has(slot):
+				if not data.stations[slot] is String or not set_station_desktop_id(slot, data.stations[slot]):
+					_invalid_station_slots.append(slot)
 	return OK
 
 func save_settings() -> Error:
@@ -149,6 +161,7 @@ func _defaults() -> void:
 	_volume = 0.5
 	_bindings.clear()
 	_stations.clear()
+	_invalid_station_slots.clear()
 
 static func _valid_keys(keys: Array) -> bool:
 	if keys.is_empty() or keys.size() > MAX_BINDINGS:

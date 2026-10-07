@@ -65,7 +65,7 @@ func run() -> void:
 	check(main.onboarding.active and not main.menu_open, "Replay resumes guide and exits overlay")
 	main._toggle_menu()
 	main.pause_panel.show_page("settings")
-	main.pause_panel._cursor.select(3, 5)
+	main.pause_panel._cursor.select(4, 6)
 	main.pause_panel.activate_selection()
 	check(not main.onboarding.active and not main.menu_open, "Skip dismisses guide through keyboard menu")
 	main.queue_free()

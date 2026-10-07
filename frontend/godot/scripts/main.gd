@@ -7,6 +7,7 @@ const Store = preload("res://scripts/settings_store.gd")
 const Onboarding = preload("res://ui/onboarding.gd")
 const UiAudio = preload("res://scripts/ui_audio.gd")
 const Bindings = preload("res://scripts/key_bindings.gd")
+const Mappings = preload("res://scripts/station_mappings.gd")
 
 # Tests and performance fixtures disable all preference IO, or inject a temp path.
 @export var load_preferences := true
@@ -37,6 +38,8 @@ var feed_open: bool:
 var media_open: bool:
 	get: return overlays.current == Overlay.Mode.MEDIA
 var _stations: Array[Node] = []
+var _applications_by_id: Dictionary = {}
+var _registry_received := false
 
 func _ready() -> void:
 	Actions.ensure_registered()
@@ -61,6 +64,8 @@ func _ready() -> void:
 	pause_panel.reset_requested.connect(reset_preferences)
 	pause_panel.binding_requested.connect(_on_binding_requested)
 	pause_panel.bindings_reset_requested.connect(_reset_bindings)
+	pause_panel.station_mapping_requested.connect(_on_station_mapping_requested)
+	pause_panel.station_mappings_reset_requested.connect(_reset_station_mappings)
 	for panel in [pause_panel, workspace_map, notification_feed, media_console]:
 		panel.ui_cue_requested.connect(ui_audio.play_cue)
 	overlays = Overlay.new(player, hud, {
@@ -79,6 +84,7 @@ func _ready() -> void:
 	for station in get_tree().get_nodes_in_group("application_stations"):
 		_stations.append(station)
 		station.status_changed.connect(_on_station_status_changed)
+	_apply_station_mappings()
 	backend.ux_status_changed.connect(_on_backend_ux_status)
 	backend.launch_status_changed.connect(_on_launch_status_changed)
 	backend.applications_changed.connect(_on_applications_changed)
@@ -162,7 +168,49 @@ func _apply_preferences() -> void:
 		settings.clear_bindings()
 		hud.show_transient("CONTROLS INVALID // DEFAULTS RESTORED", "waiting", 4.0)
 	if onboarding != null: _refresh_help()
-	player.refresh_interaction()
+	_apply_station_mappings()
+	if not settings.invalid_station_slots().is_empty():
+		hud.show_transient("STATION ID INVALID // DEFAULT USED", "waiting", 4.0)
+
+func _apply_station_mappings() -> void:
+	for station in _stations:
+		var slot: String = station.station_slot
+		var target_id: String = Mappings.desktop_id(settings, slot)
+		var checked: bool = _registry_received or not settings.station_desktop_id(slot).is_empty()
+		var application: Dictionary = _applications_by_id.get(target_id, {}) if checked else {}
+		if station.desktop_id == target_id and station.registry_checked == checked and station.application == application:
+			continue
+		station.desktop_id = target_id
+		# A saved but unknown ID is unavailable even before the first catalog.
+		if checked:
+			station.bind_application(application)
+		else:
+			station.registry_checked = false
+			station.application.clear()
+			station.status = "offline"
+			station.retry_available = false
+			station._refresh_sprite()
+	if player.input_enabled: player.refresh_interaction()
+
+func _on_station_mapping_requested(slot: String, id: String) -> void:
+	var problem := "INVALID SLOT" if not Mappings.DEFAULTS.has(slot) else ""
+	if problem.is_empty() and not id.is_empty():
+		problem = "CORE OFFLINE // RECONNECT FIRST" if backend.state != BackendClient.ConnectionState.READY else Mappings.choose_reason(slot, id, _applications_by_id)
+	if not problem.is_empty():
+		pause_panel.set_feedback(problem)
+		ui_audio.play_cue("reject")
+		return
+	if id.is_empty(): settings.clear_station_mapping(slot)
+	else: settings.set_station_desktop_id(slot, id)
+	_on_preferences_changed()
+	pause_panel.show_page("stations")
+	pause_panel.set_feedback("STATION MAPPED // CORE STILL VALIDATES LAUNCH")
+	_refresh_station_running_states(backend.session_snapshot)
+
+func _reset_station_mappings() -> void:
+	settings.clear_station_mappings()
+	_on_preferences_changed()
+	pause_panel.set_feedback("DEFAULT STATIONS RESTORED")
 
 func _on_binding_requested(action: String, keys: Array) -> void:
 	var problem := Bindings.remap_reason(settings, action, keys)
@@ -369,16 +417,15 @@ func _on_interaction_requested(target: Node) -> void:
 		target.interact()
 
 func _on_applications_changed(applications: Array) -> void:
-	var applications_by_id: Dictionary = {}
+	_applications_by_id.clear()
+	_registry_received = true
 	for application in applications:
 		if application is Dictionary:
 			var desktop_id := String(application.get("id", ""))
-			if not desktop_id.is_empty():
-				applications_by_id[desktop_id] = application
-
-	for station in _stations:
-		if "desktop_id" in station and station.has_method("bind_application"):
-			station.bind_application(applications_by_id.get(station.desktop_id, {}))
+			if Store._valid_desktop_id(desktop_id):
+				_applications_by_id[desktop_id] = application
+	_apply_station_mappings()
+	pause_panel.set_registry(_applications_by_id)
 
 func _toggle_menu() -> void:
 	ui_audio.play_cue("confirm")
