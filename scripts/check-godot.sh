@@ -52,6 +52,7 @@ run_godot world-art --script res://tests/world_art_validation.gd
 run_godot world-layout --script res://tests/world_layout_validation.gd
 run_godot audio --script res://tests/audio_validation.gd
 run_godot audio-wiring --script res://tests/audio_wiring_validation.gd
+run_godot remapping --script res://tests/remapping_validation.gd
 
 echo "Godot scene validation passed."
 run_godot phase1 --script res://tests/phase1_validation.gd

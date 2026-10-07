@@ -6,6 +6,7 @@ const SessionBinding = preload("res://scripts/session_binding.gd")
 const Store = preload("res://scripts/settings_store.gd")
 const Onboarding = preload("res://ui/onboarding.gd")
 const UiAudio = preload("res://scripts/ui_audio.gd")
+const Bindings = preload("res://scripts/key_bindings.gd")
 
 # Tests and performance fixtures disable all preference IO, or inject a temp path.
 @export var load_preferences := true
@@ -57,6 +58,8 @@ func _ready() -> void:
 	pause_panel.dismiss_requested.connect(func(): onboarding.dismiss(); overlays.close(Overlay.Mode.PAUSE))
 	pause_panel.preferences_changed.connect(_on_preferences_changed)
 	pause_panel.reset_requested.connect(reset_preferences)
+	pause_panel.binding_requested.connect(_on_binding_requested)
+	pause_panel.bindings_reset_requested.connect(_reset_bindings)
 	for panel in [pause_panel, workspace_map, notification_feed, media_console]:
 		panel.ui_cue_requested.connect(ui_audio.play_cue)
 	overlays = Overlay.new(player, hud, {
@@ -153,6 +156,27 @@ func _on_preferences_changed() -> void:
 func _apply_preferences() -> void:
 	player.set_reduced_motion(settings.reduced_motion())
 	if ui_audio != null: ui_audio.configure(settings.audio_muted(), settings.audio_volume())
+	if not Bindings.apply(settings):
+		# Malformed/conflicting keyboard configuration fails to reachable defaults.
+		settings.clear_bindings()
+		hud.show_transient("CONTROLS INVALID // DEFAULTS RESTORED", "waiting", 4.0)
+	if onboarding != null: _refresh_help()
+	player.refresh_interaction()
+
+func _on_binding_requested(action: String, keys: Array) -> void:
+	var problem := Bindings.remap_reason(settings, action, keys)
+	if not problem.is_empty():
+		pause_panel.set_feedback(problem)
+		ui_audio.play_cue("reject")
+		return
+	settings.set_action_keys(action, keys)
+	_on_preferences_changed()
+	pause_panel.refresh()
+
+func _reset_bindings() -> void:
+	settings.clear_bindings()
+	_on_preferences_changed()
+	pause_panel.set_feedback("DEFAULT KEYS RESTORED // CONTROLLER UNCHANGED")
 
 func reset_preferences() -> void:
 	# Disabled IO means reset is in-memory too, never delete the production file.
@@ -183,6 +207,10 @@ func _on_hub_object_activated(kind: String) -> void:
 			overlays.open(Overlay.Mode.OBSERVATORY)
 
 func _input(event: InputEvent) -> void:
+	if pause_panel.capturing_key and event is InputEventKey:
+		get_viewport().set_input_as_handled()
+		pause_panel.capture_key(event)
+		return
 	if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):
 		get_viewport().set_input_as_handled()
 		_toggle_menu()

@@ -4,12 +4,15 @@ const Shell = preload("res://ui/panel_shell.gd")
 const Cursor = preload("res://ui/list_cursor.gd")
 const Tokens = preload("res://ui/design_tokens.gd")
 const Actions = preload("res://scripts/input_actions.gd")
+const Bindings = preload("res://scripts/key_bindings.gd")
 signal resume_requested
 signal replay_requested
 signal dismiss_requested
 signal preferences_changed
 signal reset_requested
 signal ui_cue_requested(kind: String)
+signal binding_requested(action: String, keys: Array)
+signal bindings_reset_requested
 var page := "home"
 var backend_status: Label
 var _backend: Node
@@ -20,6 +23,8 @@ var _cursor := Cursor.new(5)
 var _rows: Array[Label] = []
 var _items: Array[String] = []
 var _detail: Label
+var capturing_key := false
+var _capture_action := ""
 
 func _ready() -> void:
 	visible = false
@@ -45,6 +50,9 @@ func open() -> void:
 	show_page("home")
 
 func back() -> bool:
+	if capturing_key:
+		cancel_capture()
+		return true
 	if page == "home": return false
 	show_page("settings" if page in ["accessibility", "audio", "reset"] else "home")
 	return true
@@ -52,6 +60,7 @@ func back() -> bool:
 func show_page(next: String) -> void:
 	if next not in ["home", "help", "diagnostics", "controls", "settings", "accessibility", "audio", "reset"]: return
 	page = next
+	capturing_key = false
 	_feedback = ""
 	_cursor.select(0, 1)
 	refresh()
@@ -73,7 +82,8 @@ func refresh() -> void:
 			_items.clear()
 			for action in Actions.DEFAULTS:
 				_items.append("%s // %s" % [action.replace("_", " ").to_upper(), Actions.binding_label(action)])
-			_detail.text = "READ-ONLY // REMAPPING IS D6.11"
+			_items.append("RESET ALL KEY BINDINGS")
+			_detail.text = "PRESS A NEW KEY // ESC CANCEL" if capturing_key else "ENTER REMAP // ESC REMAINS RECOVERY"
 		"diagnostics":
 			var feed: String = "DISABLED" if _backend.notifications_policy_disabled else _backend.notifications_availability.to_upper()
 			if feed == "AVAILABLE": feed = "ENABLED / OPT-IN"
@@ -106,6 +116,7 @@ func refresh() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible: return
+	if capturing_key: return
 	if Actions.pressed(event, "nav_up") or Actions.pressed(event, "nav_down"):
 		_cursor.move(-1 if Actions.pressed(event, "nav_up") else 1, _items.size())
 		refresh()
@@ -159,6 +170,36 @@ func activate_selection() -> void:
 		"reset":
 			if _cursor.selected == 1: reset_requested.emit()
 			else: show_page("settings")
+		"controls":
+			if _cursor.selected == Actions.DEFAULTS.size():
+				bindings_reset_requested.emit()
+			else:
+				_capture_action = String(Actions.DEFAULTS.keys()[_cursor.selected])
+				capturing_key = true
+				_feedback = ""
+				refresh()
+
+func capture_key(event: InputEventKey) -> void:
+	if not capturing_key or not event.pressed or event.echo: return
+	var key := int(event.physical_keycode if event.physical_keycode != 0 else event.keycode)
+	if key == KEY_ESCAPE:
+		cancel_capture()
+		return
+	if event.ctrl_pressed or event.alt_pressed or event.meta_pressed:
+		set_feedback("MODIFIED CHORDS ARE NOT SUPPORTED")
+		ui_cue_requested.emit("reject")
+		return
+	var problem := Bindings.remap_reason(_settings, _capture_action, [key])
+	if not problem.is_empty():
+		set_feedback(problem)
+		ui_cue_requested.emit("reject")
+		return
+	capturing_key = false
+	binding_requested.emit(_capture_action, [key])
+
+func cancel_capture() -> void:
+	capturing_key = false
+	set_feedback("CANCELLED // BINDINGS UNCHANGED")
 
 func set_feedback(message: String) -> void:
 	_feedback = message

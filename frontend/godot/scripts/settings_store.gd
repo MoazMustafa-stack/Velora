@@ -61,6 +61,9 @@ func set_action_keys(action: String, keys: Array) -> bool:
 	_bindings[action] = keys.duplicate()
 	return true
 
+func clear_bindings() -> void:
+	_bindings.clear()
+
 func station_desktop_id(slot: String) -> String:
 	return _stations.get(slot, "")
 
