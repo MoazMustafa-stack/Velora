@@ -48,6 +48,7 @@ run_godot pause --script res://tests/pause_validation.gd
 run_godot preferences-ui --script res://tests/preferences_ui_validation.gd
 run_godot accessibility --script res://tests/accessibility_validation.gd
 run_godot reduced-motion --script res://tests/reduced_motion_validation.gd
+run_godot world-art --script res://tests/world_art_validation.gd
 
 echo "Godot scene validation passed."
 run_godot phase1 --script res://tests/phase1_validation.gd

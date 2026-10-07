@@ -91,4 +91,4 @@ func apply_launch_feedback(stage: String, _message: String, retryable: bool) -> 
 	_refresh_sprite()
 
 func _refresh_sprite() -> void:
-	sprite.texture = PixelArt.create_workstation_texture(status, accent, station_kind)
+	sprite.texture = PixelArt.workstation_texture(status, accent, station_kind)

@@ -20,6 +20,63 @@ const STATE_MARKERS := {
 	"attention": ["..#..", "..#..", "..#..", ".....", "..#.."],
 	"offline": ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
 }
+static var _station_cache: Dictionary = {}
+static var _object_cache: Dictionary = {}
+
+static func workstation_texture(state: String, accent: Color, kind: String) -> ImageTexture:
+	state = state if STATE_MARKERS.has(state) else "offline"
+	kind = kind if kind in ["code", "browser", "terminal"] else "code"
+	var key := "%s:%s:%s" % [state, kind, accent.to_html()]
+	if not _station_cache.has(key):
+		_station_cache[key] = create_workstation_texture(state, accent, kind)
+	return _station_cache[key]
+
+static func hub_object_texture(kind: String) -> ImageTexture:
+	kind = kind if kind in ["map", "media", "notifications", "observatory"] else "observatory"
+	if not _object_cache.has(kind):
+		_object_cache[kind] = _create_hub_object_texture(kind)
+	return _object_cache[kind]
+
+static func _create_hub_object_texture(kind: String) -> ImageTexture:
+	var image := Image.create_empty(32, 32, false, Image.FORMAT_RGBA8)
+	image.fill(Color.TRANSPARENT)
+	image.fill_rect(Rect2i(2, 28, 28, 2), Color(0, 0, 0, 0.4))
+	match kind:
+		"map":
+			image.fill_rect(Rect2i(2, 5, 9, 19), STEEL_LIGHT)
+			image.fill_rect(Rect2i(11, 8, 9, 19), SOFT_WHITE)
+			image.fill_rect(Rect2i(20, 5, 10, 19), STEEL_LIGHT)
+			for x in [6, 15, 24]: image.fill_rect(Rect2i(x, 10, 2, 11), SHADOW)
+			image.fill_rect(Rect2i(4, 15, 24, 2), CYAN)
+			image.fill_rect(Rect2i(14, 14, 4, 4), AMBER)
+		"media":
+			image.fill_rect(Rect2i(9, 2, 14, 3), SOFT_WHITE)
+			image.fill_rect(Rect2i(2, 8, 28, 18), STEEL_LIGHT)
+			for x in [4, 22]:
+				image.fill_rect(Rect2i(x, 12, 6, 10), SHADOW)
+				image.fill_rect(Rect2i(x + 2, 15, 2, 4), SOFT_WHITE)
+			image.fill_rect(Rect2i(12, 11, 8, 11), SHADOW)
+			for x in range(4): image.fill_rect(Rect2i(14 + x, 13 + x, 1, 7 - 2 * x), CYAN_LIGHT)
+		"notifications":
+			image.fill_rect(Rect2i(8, 3, 16, 3), SOFT_WHITE)
+			image.fill_rect(Rect2i(6, 6, 20, 16), STEEL_LIGHT)
+			image.fill_rect(Rect2i(9, 10, 14, 9), SHADOW)
+			image.fill_rect(Rect2i(11, 12, 10, 5), SOFT_WHITE)
+			image.fill_rect(Rect2i(15, 22, 3, 7), STEEL_BLUE)
+			image.fill_rect(Rect2i(25, 1, 2, 12), AMBER)
+			image.fill_rect(Rect2i(27, 1, 4, 4), AMBER)
+		"observatory":
+			for step in range(4):
+				image.fill_rect(Rect2i(5 + step * 4, 15 - step * 3, 6, 7), STEEL_LIGHT)
+			image.fill_rect(Rect2i(22, 3, 7, 10), SOFT_WHITE)
+			image.fill_rect(Rect2i(24, 5, 3, 6), CYAN)
+			image.fill_rect(Rect2i(14, 21, 3, 6), STEEL_BLUE)
+			image.fill_rect(Rect2i(9, 27, 13, 2), SOFT_WHITE)
+	# Common interaction tick; object identity comes from silhouette, not color.
+	image.set_pixel(15, 30, SOFT_WHITE)
+	image.set_pixel(16, 31, SOFT_WHITE)
+	image.set_pixel(17, 30, SOFT_WHITE)
+	return ImageTexture.create_from_image(image)
 
 static func create_tileset() -> TileSet:
 	var image := Image.create_empty(64, 16, false, Image.FORMAT_RGBA8)
@@ -99,6 +156,12 @@ static func create_workstation_texture(
 	image.fill_rect(Rect2i(5, 20, 22, 6), Color("1b2945"))
 	image.fill_rect(Rect2i(8, 3, 16, 15), SHADOW)
 	image.fill_rect(Rect2i(9, 4, 14, 13), STEEL_LIGHT)
+	match station_kind:
+		"code":
+			image.fill_rect(Rect2i(6, 4, 2, 14), STEEL_LIGHT)
+			image.fill_rect(Rect2i(24, 4, 2, 14), STEEL_LIGHT)
+		"browser": image.fill_rect(Rect2i(10, 1, 12, 3), STEEL_LIGHT)
+		"terminal": image.fill_rect(Rect2i(5, 5, 22, 12), STEEL_LIGHT)
 	image.fill_rect(Rect2i(11, 6, 10, 8), Color("0d3140"))
 	image.fill_rect(Rect2i(12, 7, 8, 6), accent.darkened(0.55))
 	_draw_station_glyph(image, station_kind, accent)
@@ -112,6 +175,9 @@ static func create_workstation_texture(
 	for y in range(5):
 		for x in range(5):
 			if marker[y][x] == "#": image.set_pixel(24 + x, 21 + y, SOFT_WHITE)
+	image.set_pixel(15, 30, SOFT_WHITE)
+	image.set_pixel(16, 31, SOFT_WHITE)
+	image.set_pixel(17, 30, SOFT_WHITE)
 	return ImageTexture.create_from_image(image)
 
 static func _draw_station_glyph(image: Image, station_kind: String, accent: Color) -> void:
