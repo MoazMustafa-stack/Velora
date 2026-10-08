@@ -1,5 +1,6 @@
 extends SceneTree
 ## Public backend signals exercise the real HUD and observatory together.
+const Overlay = preload("res://ui/overlay_coordinator.gd")
 var failed := false
 
 func check(value: bool, message: String) -> void:
@@ -30,7 +31,7 @@ func run() -> void:
 		"disk": {"availability": "warming_up", "read_bytes_per_second": 0, "write_bytes_per_second": 0, "device_count": 1},
 		"network": {"availability": "unavailable", "receive_bytes_per_second": 0, "transmit_bytes_per_second": 0, "interface_count": 0}}
 	main.backend.telemetry_snapshot_changed.emit(sample)
-	main.observatory.open()
+	main.overlays.open(Overlay.Mode.OBSERVATORY)
 	await process_frame
 	var hud_text := text_of(main.hud)
 	var panel_text := text_of(main.observatory)
@@ -41,7 +42,8 @@ func run() -> void:
 	if not OS.get_environment("VELORA_TELEMETRY_FRAME").is_empty():
 		await RenderingServer.frame_post_draw
 		root.get_texture().get_image().save_png(OS.get_environment("VELORA_TELEMETRY_FRAME"))
-	sample.cpu = {"availability": "available", "utilization_basis_points": 2500}
+	sample.cpu.availability = "available"
+	sample.cpu.utilization_basis_points = 2500
 	sample.disk.availability = "available"
 	sample.network.availability = "available"
 	main.backend.telemetry_snapshot_changed.emit(sample)

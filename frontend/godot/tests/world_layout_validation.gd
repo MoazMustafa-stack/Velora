@@ -90,7 +90,7 @@ func run() -> void:
 		# Return along the upper/bottom lane, not vertically through an object.
 		await drive(main.player, Vector2(160, main.player.position.y))
 	main.overlays.open(Overlay.Mode.OBSERVATORY)
-	main.backend.telemetry_snapshot_changed.emit({"cpu": {"utilization_basis_points": 1234}, "memory": {"used_bytes": 1048576, "total_bytes": 2097152}})
+	main.backend.telemetry_snapshot_changed.emit({"cpu": {"availability": "available", "utilization_basis_points": 1234}, "memory": {"availability": "available", "used_bytes": 1048576, "total_bytes": 2097152}})
 	check(main.observatory._rows[0].summary.text.contains("12.3%"), "Observatory displays real normalized snapshot fields while paused")
 	await process_frame
 	await process_frame

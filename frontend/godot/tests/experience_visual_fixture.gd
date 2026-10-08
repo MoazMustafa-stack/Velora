@@ -103,7 +103,7 @@ func run() -> void:
 	main._refresh_input_labels()
 	main.overlays.open(Overlay.Mode.OBSERVATORY)
 	main.observatory.set_availability("available")
-	main.observatory.update_snapshot({"cpu": {"utilization_basis_points": 5023}, "memory": {"used_bytes": 1048576000, "total_bytes": 2097152000}, "disk": {"read_bytes_per_second": 999999999999}, "network": {"transmit_bytes_per_second": 999999999999}})
+	main.observatory.update_snapshot({"cpu": {"availability": "available", "utilization_basis_points": 5023}, "memory": {"availability": "available", "used_bytes": 1048576000, "total_bytes": 2097152000}, "disk": {"availability": "available", "read_bytes_per_second": 999999999999}, "network": {"availability": "available", "transmit_bytes_per_second": 999999999999}})
 	await capture("observatory-full", main.observatory._shell.panel)
 	main.observatory.set_core_online(false)
 	await capture("observatory-stale", main.observatory._shell.panel)
