@@ -15,7 +15,6 @@ const LAUNCH_COOLDOWN: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 struct LaunchTarget {
-    application: Application,
     desktop_file: PathBuf,
 }
 
@@ -99,15 +98,7 @@ impl LaunchService {
                 launch_paths
                     .get(&application.id)
                     .cloned()
-                    .map(|desktop_file| {
-                        (
-                            application.id.clone(),
-                            LaunchTarget {
-                                application: application.clone(),
-                                desktop_file,
-                            },
-                        )
-                    })
+                    .map(|desktop_file| (application.id.clone(), LaunchTarget { desktop_file }))
             })
             .collect();
 
@@ -132,16 +123,18 @@ impl LaunchService {
             .cloned()
             .ok_or(LaunchError::UnknownApplication)?;
 
-        if target.application.terminal {
-            return Err(LaunchError::TerminalRequired);
-        }
-
         let locales = freedesktop_desktop_entry::get_languages_from_env();
         let entry = DesktopEntry::from_path(&target.desktop_file, Some(&locales))
             .map_err(|error| LaunchError::MalformedEntry(error.to_string()))?;
 
         if entry.type_() != Some("Application") || entry.hidden() || entry.no_display() {
             return Err(LaunchError::UnknownApplication);
+        }
+
+        // Registry metadata is a display cache, not launch-time authorization.
+        // Validate Terminal from the same fresh entry used to resolve Exec.
+        if entry.terminal() {
+            return Err(LaunchError::TerminalRequired);
         }
 
         let raw_exec = entry
@@ -353,11 +346,48 @@ mod tests {
         let application = test_application("terminal.desktop", true);
         let (_directory, service) = service_for_entry(
             application,
-            "[Desktop Entry]\nType=Application\nName=Terminal\nExec=/bin/echo safe\n",
+            "[Desktop Entry]\nType=Application\nName=Terminal\nTerminal=true\nExec=/velora/not/a/real/program\n",
         );
 
         let error = service.launch("terminal.desktop").await.unwrap_err();
         assert!(matches!(error, LaunchError::TerminalRequired));
+    }
+
+    #[tokio::test]
+    async fn enforces_terminal_policy_after_entry_changes_since_registration() {
+        let id = "changed.desktop";
+        let (directory, service) = service_for_entry(
+            test_application(id, false),
+            "[Desktop Entry]\nType=Application\nName=Changed\nTerminal=false\nExec=/velora/not/a/real/program\n",
+        );
+        fs::write(
+            directory.path().join(id),
+            "[Desktop Entry]\nType=Application\nName=Changed\nTerminal=true\nExec=/velora/not/a/real/program\n",
+        )
+        .unwrap();
+
+        let error = service.launch(id).await.unwrap_err();
+        assert!(matches!(error, LaunchError::TerminalRequired));
+        assert_eq!(error.code(), "terminal_required");
+        assert!(!error.retryable());
+    }
+
+    #[tokio::test]
+    async fn stale_terminal_cache_does_not_override_current_entry() {
+        let id = "changed.desktop";
+        let (directory, service) = service_for_entry(
+            test_application(id, true),
+            "[Desktop Entry]\nType=Application\nName=Changed\nTerminal=true\nExec=/velora/not/a/real/program\n",
+        );
+        fs::write(
+            directory.path().join(id),
+            "[Desktop Entry]\nType=Application\nName=Changed\nTerminal=false\nExec=/velora/not/a/real/program\n",
+        )
+        .unwrap();
+
+        // Advance to executable validation without ever spawning a process.
+        let error = service.launch(id).await.unwrap_err();
+        assert!(matches!(error, LaunchError::ExecutableUnavailable(_)));
     }
 
     #[tokio::test]
