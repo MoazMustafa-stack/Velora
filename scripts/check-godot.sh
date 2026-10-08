@@ -42,6 +42,7 @@ run_godot settings --script res://tests/settings_validation.gd
 run_godot overlays --script res://tests/overlay_validation.gd
 run_godot input-actions --script res://tests/input_actions_validation.gd
 run_godot hud-layout --script res://tests/hud_layout_validation.gd
+run_godot telemetry-ui --script res://tests/telemetry_ui_validation.gd
 run_godot empty-states --script res://tests/empty_states_validation.gd
 run_godot onboarding --script res://tests/onboarding_validation.gd
 run_godot pause --script res://tests/pause_validation.gd

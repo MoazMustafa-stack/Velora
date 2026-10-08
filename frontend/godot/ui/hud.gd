@@ -2,6 +2,7 @@ extends CanvasLayer
 
 const Tokens = preload("res://ui/design_tokens.gd")
 const Layout = preload("res://ui/hud_layout.gd")
+const MetricStatus = preload("res://ui/telemetry_status.gd")
 
 const TONE_COLORS := Tokens.TONES
 
@@ -89,12 +90,20 @@ func set_telemetry_snapshot(snapshot: Dictionary) -> void:
 	var memory: Dictionary = snapshot.get("memory", {})
 	var disk: Dictionary = snapshot.get("disk", {})
 	var network: Dictionary = snapshot.get("network", {})
-	var cpu_percent := float(int(cpu.get("utilization_basis_points", 0))) / 100.0
+	var cpu_text := MetricStatus.label(cpu, "utilization_basis_points")
+	var memory_text := MetricStatus.label(memory)
+	var disk_text := MetricStatus.label(disk)
+	var network_text := MetricStatus.label(network)
+	var fully_available := cpu_text.is_empty() and memory_text.is_empty() and disk_text.is_empty() and network_text.is_empty()
+	if cpu_text.is_empty(): cpu_text = "%.0f%%" % (float(cpu.utilization_basis_points) / 100.0)
 	var memory_percent := 0.0
 	if int(memory.get("total_bytes", 0)) > 0:
 		memory_percent = 100.0 * float(int(memory.get("used_bytes", 0))) / float(int(memory.get("total_bytes", 1)))
-	_telemetry.text = "SYS // CPU %.0f%%  MEM %.0f%%  D %s/%s  N %s/%s" % [cpu_percent, memory_percent, _rate(int(disk.get("read_bytes_per_second", 0))), _rate(int(disk.get("write_bytes_per_second", 0))), _rate(int(network.get("receive_bytes_per_second", 0))), _rate(int(network.get("transmit_bytes_per_second", 0)))]
-	_telemetry.add_theme_color_override("font_color", _tone_color("ready"))
+	if memory_text.is_empty(): memory_text = "%.0f%%" % memory_percent
+	if disk_text.is_empty(): disk_text = "%s/%s" % [_rate(int(disk.get("read_bytes_per_second", 0))), _rate(int(disk.get("write_bytes_per_second", 0)))]
+	if network_text.is_empty(): network_text = "%s/%s" % [_rate(int(network.get("receive_bytes_per_second", 0))), _rate(int(network.get("transmit_bytes_per_second", 0)))]
+	_telemetry.text = "SYS // CPU %s  MEM %s  D %s  N %s" % [cpu_text, memory_text, disk_text, network_text]
+	_telemetry.add_theme_color_override("font_color", _tone_color("ready" if fully_available else "waiting"))
 
 func _rate(bytes_per_second: int) -> String:
 	if bytes_per_second >= 1_048_576:
