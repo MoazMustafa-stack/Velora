@@ -2,6 +2,7 @@
 //! hints only: they never build state, they only request a fresh snapshot.
 
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -140,16 +141,34 @@ fn invalidate(invalidation_tx: &mpsc::Sender<()>) {
 #[derive(Default)]
 struct EventLineReader {
     buffer: Vec<u8>,
+    unread: VecDeque<u8>,
+    discarding: bool,
 }
 
 impl EventLineReader {
-    const BUFFER_CAP: usize = MAX_EVENT_LINE_BYTES * 2;
-
-    /// Pull one complete line from buffered bytes, if present.
+    /// Consume one bounded chunk. Oversized lines are discarded THROUGH their
+    /// newline; following valid bytes in the same chunk remain available.
     fn extract_line(&mut self) -> Option<String> {
-        let newline = self.buffer.iter().position(|&byte| byte == b'\n')?;
-        let line: Vec<u8> = self.buffer.drain(..=newline).collect();
-        Some(String::from_utf8_lossy(&line[..newline]).into_owned())
+        while let Some(byte) = self.unread.pop_front() {
+            if byte == b'\n' {
+                if self.discarding {
+                    self.discarding = false;
+                    continue;
+                }
+                let line = String::from_utf8_lossy(&self.buffer).into_owned();
+                self.buffer.clear();
+                return Some(line);
+            }
+            if !self.discarding {
+                if self.buffer.len() == MAX_EVENT_LINE_BYTES {
+                    self.buffer.clear();
+                    self.discarding = true;
+                } else {
+                    self.buffer.push(byte);
+                }
+            }
+        }
+        None
     }
 
     async fn next_line(&mut self, stream: &mut UnixStream) -> std::io::Result<Option<String>> {
@@ -157,19 +176,12 @@ impl EventLineReader {
             if let Some(line) = self.extract_line() {
                 return Ok(Some(line));
             }
-            if self.buffer.len() > Self::BUFFER_CAP {
-                self.buffer.clear();
-            }
-
             let mut chunk = [0_u8; READ_CHUNK_BYTES];
             let read = stream.read(&mut chunk).await?;
             if read == 0 {
                 return Ok(None);
             }
-            let room = Self::BUFFER_CAP - self.buffer.len().min(Self::BUFFER_CAP);
-            if room > 0 {
-                self.buffer.extend_from_slice(&chunk[..read.min(room)]);
-            }
+            self.unread.extend(&chunk[..read]);
         }
     }
 }
@@ -444,14 +456,40 @@ mod tests {
         );
     }
 
-    #[test]
-    fn buffered_extraction_survives_oversized_garbage() {
-        let mut reader = EventLineReader {
-            buffer: vec![b'x'; EventLineReader::BUFFER_CAP + 500],
-        };
-        assert_eq!(reader.extract_line(), None);
-        reader.buffer.clear();
-        reader.buffer.extend_from_slice(b"workspace>>5\n");
-        assert_eq!(reader.extract_line().as_deref(), Some("workspace>>5"));
+    #[tokio::test]
+    async fn listener_recovers_valid_events_after_an_oversized_line_without_disconnect() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("events.sock");
+        let listener = StdUnixListener::bind(&path).unwrap();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            use std::io::Write;
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(&vec![b'x'; 2048]).unwrap();
+            stream.write_all(b"\nworkspace>>5\n").unwrap();
+            // Holding the peer open prevents a false pass from disconnect's
+            // own invalidation signal. Only the valid event may wake the test.
+            let _ = release_rx.recv_timeout(Duration::from_secs(3));
+        });
+        let (tx, mut rx) = mpsc::channel(1);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let task = tokio::spawn(run_event_listener(
+            path,
+            tx,
+            shutdown_rx,
+            ListenerConfig::production(),
+        ));
+        let delivered = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await;
+        let _ = shutdown.send(true);
+        let _ = release_tx.send(());
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+        server.join().unwrap();
+        assert!(
+            matches!(delivered, Ok(Some(()))),
+            "valid event must be delivered after oversized input while the peer stays connected"
+        );
     }
 }
