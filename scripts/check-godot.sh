@@ -60,6 +60,8 @@ run_godot mapping-model --script res://tests/station_mapping_model_validation.gd
 run_godot mapping-ui --script res://tests/station_mapping_ui_validation.gd
 
 echo "Godot scene validation passed."
+bash "$script_dir/check-bridge-worker.sh"
+bash "$script_dir/check-bridge-worker.sh" backlog
 run_godot phase1 --script res://tests/phase1_validation.gd
 run_godot stations --script res://tests/station_validation.gd
 run_godot launch-ux --script res://tests/launch_ux_validation.gd

@@ -10,4 +10,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 godot = { version = "=0.5.5", features = ["api-4-7"] }
+socket2 = "0.6"
 velora-protocol = { path = "../../crates/velora-protocol" }

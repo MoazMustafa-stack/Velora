@@ -1,6 +1,7 @@
 use godot::prelude::*;
+use socket2::{Domain, SockAddr, Socket, Type};
 use std::{
-    io::{ErrorKind, Read, Write},
+    io::{self, ErrorKind, Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
     sync::{
@@ -9,12 +10,13 @@ use std::{
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use velora_protocol::{MAX_MESSAGE_BYTES, default_socket_path};
 
 const CHANNEL_CAPACITY: usize = 128;
 const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const WRITE_DEADLINE: Duration = Duration::from_millis(250);
 
 struct VeloraExtension;
 
@@ -220,7 +222,15 @@ fn run_worker(
     event_sender: SyncSender<WorkerEvent>,
     shutdown: Arc<AtomicBool>,
 ) {
-    let mut stream = match UnixStream::connect(&path) {
+    // The connection attempt must be bounded too: a full Unix listen backlog
+    // cannot strand the Godot-thread join during reconnect or exit.
+    let connect = || -> io::Result<UnixStream> {
+        let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
+        socket.connect_timeout(&SockAddr::unix(&path)?, SOCKET_POLL_INTERVAL)?;
+        let descriptor: std::os::fd::OwnedFd = socket.into();
+        Ok(UnixStream::from(descriptor))
+    };
+    let mut stream = match connect() {
         Ok(stream) => stream,
         Err(error) => {
             send_event(
@@ -231,7 +241,10 @@ fn run_worker(
             return;
         }
     };
-    if let Err(error) = stream.set_read_timeout(Some(SOCKET_POLL_INTERVAL)) {
+    if let Err(error) = stream
+        .set_read_timeout(Some(SOCKET_POLL_INTERVAL))
+        .and_then(|()| stream.set_write_timeout(Some(SOCKET_POLL_INTERVAL)))
+    {
         send_event(
             &event_sender,
             &shutdown,
@@ -251,12 +264,14 @@ fn run_worker(
             return;
         }
         loop {
+            if shutdown.load(Ordering::Acquire) {
+                return;
+            }
             match command_receiver.try_recv() {
                 Ok(WorkerCommand::Send(payload)) => {
-                    if let Err(error) = stream
-                        .write_all(payload.as_bytes())
-                        .and_then(|_| stream.write_all(b"\n"))
-                    {
+                    let mut frame = payload.into_bytes();
+                    frame.push(b'\n');
+                    if let Err(error) = write_frame(&mut stream, &frame, &shutdown) {
                         send_event(
                             &event_sender,
                             &shutdown,
@@ -308,6 +323,41 @@ fn run_worker(
             }
         }
     }
+}
+
+fn write_frame(stream: &mut UnixStream, frame: &[u8], shutdown: &AtomicBool) -> io::Result<()> {
+    let deadline = Instant::now() + WRITE_DEADLINE;
+    let mut written = 0;
+    while written < frame.len() {
+        if shutdown.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                ErrorKind::Interrupted,
+                "bridge shutting down",
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                ErrorKind::TimedOut,
+                "socket write deadline exceeded",
+            ));
+        }
+        match stream.write(&frame[written..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    ErrorKind::WriteZero,
+                    "socket closed during write",
+                ));
+            }
+            Ok(count) => written += count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::TimedOut
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn send_event(sender: &SyncSender<WorkerEvent>, shutdown: &AtomicBool, event: WorkerEvent) {

@@ -863,6 +863,7 @@ name = "velora-bridge"
 version = "0.2.0"
 dependencies = [
  "godot",
+ "socket2",
  "velora-protocol",
 ]
 
