@@ -151,14 +151,16 @@ func _save_preferences() -> Error:
 		hud.show_transient("SETTINGS NOT SAVED // CHECK ACCESS", "failure", 4.0)
 	return preferences_error
 
-func _on_preferences_changed() -> void:
+func _on_preferences_changed(success_message := "SAVED // UI PREFERENCES ONLY") -> Error:
 	_apply_preferences()
-	if _save_preferences() != OK:
+	var error := _save_preferences()
+	if error != OK:
 		ui_audio.play_cue("reject")
-		pause_panel.set_feedback("NOT SAVED // CHECK SETTINGS FILE ACCESS")
+		pause_panel.set_feedback("APPLIED // NOT SAVED // CHECK FILE ACCESS")
 	else:
 		ui_audio.play_cue("confirm")
-		pause_panel.set_feedback("SAVED // UI PREFERENCES ONLY")
+		pause_panel.set_feedback(success_message)
+	return error
 
 func _apply_preferences() -> void:
 	player.set_reduced_motion(settings.reduced_motion())
@@ -205,14 +207,12 @@ func _on_station_mapping_requested(slot: String, id: String) -> void:
 		return
 	if id.is_empty(): settings.clear_station_mapping(slot)
 	else: settings.set_station_desktop_id(slot, id)
-	_on_preferences_changed()
 	pause_panel.show_page("stations")
-	pause_panel.set_feedback("STATION MAPPED // CORE STILL VALIDATES LAUNCH")
+	_on_preferences_changed("STATION MAPPED // CORE STILL VALIDATES LAUNCH")
 
 func _reset_station_mappings() -> void:
 	settings.clear_station_mappings()
-	_on_preferences_changed()
-	pause_panel.set_feedback("DEFAULT STATIONS RESTORED")
+	_on_preferences_changed("DEFAULT STATIONS RESTORED")
 
 func _on_binding_requested(action: String, keys: Array) -> void:
 	var problem := Bindings.remap_reason(settings, action, keys)
@@ -226,8 +226,7 @@ func _on_binding_requested(action: String, keys: Array) -> void:
 
 func _reset_bindings() -> void:
 	settings.clear_bindings()
-	_on_preferences_changed()
-	pause_panel.set_feedback("DEFAULT KEYS RESTORED // CONTROLLER UNCHANGED")
+	_on_preferences_changed("DEFAULT KEYS RESTORED // CONTROLLER UNCHANGED")
 
 func reset_preferences() -> void:
 	# Disabled IO means reset is in-memory too, never delete the production file.
