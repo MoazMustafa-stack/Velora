@@ -81,7 +81,7 @@ var telemetry_snapshot: Dictionary = {}
 var telemetry_availability := "unknown"
 # Last good media and notification state is intentionally kept across
 # reconnects so the UI keeps showing stale-but-labelled data instead of going
-# blank; monotonic sequence fencing drops anything older once Core answers.
+# blank. Sequence fences are connection-local: a restarted Core starts at 1.
 var media_snapshot: Dictionary = {}
 var media_availability := "unknown"
 var notification_feed: Dictionary = {}
@@ -119,6 +119,7 @@ var _media_control_request_id := 0
 var _media_control_handle := ""
 var _media_control_verb := ""
 var _media_control_elapsed := 0.0
+var _snapshot_sequences := {"session": -1, "telemetry": -1, "media": -1, "notifications": -1}
 
 func _ready() -> void:
 	_bridge = bridge_override
@@ -395,6 +396,8 @@ func _attempt_connect() -> void:
 	_session_request_id = 0
 	_media_request_id = 0
 	_notifications_request_id = 0
+	_telemetry_request_id = 0
+	_telemetry_elapsed = 0.0
 	_clear_focus_request()
 	_clear_switch_request()
 	_clear_media_control_request()
@@ -402,6 +405,12 @@ func _attempt_connect() -> void:
 	_bridge.connect_socket(_socket_path)
 
 func _on_socket_connected() -> void:
+	# Keep last-good cache contents, but never carry their fences into a new
+	# transport session. This also refreshes an unchanged snapshot on reconnect.
+	for kind in _snapshot_sequences: _snapshot_sequences[kind] = -1
+	if not media_snapshot.is_empty(): _set_media_availability("waiting")
+	if not notification_feed.is_empty(): _set_notifications_availability("waiting")
+	if not telemetry_snapshot.is_empty(): _set_telemetry_availability("waiting")
 	_set_state(ConnectionState.HANDSHAKING, "CORE // HANDSHAKING")
 	_send_message({
 		"type": "hello",
@@ -418,6 +427,7 @@ func _on_socket_disconnected(_reason: String) -> void:
 	_session_request_id = 0
 	_media_request_id = 0
 	_notifications_request_id = 0
+	_telemetry_request_id = 0
 	if _focus_request_id != 0:
 		var pending_focus := _focus_handle
 		_clear_focus_request()
@@ -462,11 +472,9 @@ func _on_line_received(payload: String) -> void:
 			# becoming a polling loop. Later refreshes are scene-driven.
 			request_media_snapshot()
 			request_notifications()
-			if session_snapshot.is_empty():
-				# Only the first fetch is client-driven; later refreshes are
-				# Core's event-driven snapshots arriving unprompted or a
-				# scene-requested poll.
-				request_session_snapshot()
+			# Push subscriptions belong to a socket connection, not the cache.
+			# Fetch once on EVERY connection, then rely on changed-only pushes.
+			request_session_snapshot()
 		"pong":
 			var request_id := int(message.get("request_id", 0))
 			if _waiting_for_pong and request_id > 0:
@@ -846,7 +854,7 @@ func _on_workspace_snapshot(message: Dictionary) -> void:
 		_emit_ux_status("session_failed", "INVALID SESSION DATA", "failure", 3.0)
 		return
 	var sequence := int(snapshot.get("sequence", 0))
-	if sequence <= int(session_snapshot.get("sequence", 0)):
+	if not _accept_snapshot_sequence("session", sequence):
 		return
 	session_snapshot = snapshot
 	session_snapshot_changed.emit(snapshot)
@@ -865,16 +873,20 @@ func _on_workspace_snapshot_rejected(message: Dictionary) -> void:
 			pass
 
 func _on_telemetry_snapshot(message: Dictionary) -> void:
+	if state != ConnectionState.READY or _telemetry_request_id == 0:
+		return
 	var request_id := int(message.get("request_id", 0))
 	if request_id != _telemetry_request_id:
 		return
 	_telemetry_request_id = 0
 	var snapshot = message.get("snapshot", null)
-	if not snapshot is Dictionary or int(snapshot.get("sequence", 0)) <= int(telemetry_snapshot.get("sequence", 0)):
+	if not snapshot is Dictionary:
 		return
 	for key in ["cpu", "memory", "disk", "network"]:
 		if not snapshot.get(key, null) is Dictionary:
 			return
+	if not _accept_snapshot_sequence("telemetry", int(snapshot.get("sequence", -1))):
+		return
 	telemetry_snapshot = snapshot
 	_set_telemetry_availability("available")
 	telemetry_snapshot_changed.emit(snapshot)
@@ -905,7 +917,7 @@ func _on_media_snapshot(message: Dictionary) -> void:
 		_emit_ux_status("media_failed", "INVALID MEDIA DATA", "failure", 3.0)
 		return
 	var sequence := int(snapshot.get("sequence", 0))
-	if sequence <= int(media_snapshot.get("sequence", 0)):
+	if not _accept_snapshot_sequence("media", sequence):
 		return
 	media_snapshot = snapshot
 	_set_media_availability("available")
@@ -940,7 +952,7 @@ func _on_notifications(message: Dictionary) -> void:
 		_emit_ux_status("notifications_failed", "INVALID NOTIFICATION DATA", "failure", 3.0)
 		return
 	var sequence := int(feed.get("sequence", 0))
-	if sequence <= int(notification_feed.get("sequence", 0)):
+	if not _accept_snapshot_sequence("notifications", sequence):
 		return
 	notification_feed = feed
 	_set_notifications_policy_disabled(false)
@@ -979,6 +991,12 @@ func _set_media_availability(availability: String) -> void:
 		return
 	media_availability = availability
 	media_availability_changed.emit(availability)
+
+func _accept_snapshot_sequence(kind: String, sequence: int) -> bool:
+	if sequence < 0 or sequence <= int(_snapshot_sequences[kind]):
+		return false
+	_snapshot_sequences[kind] = sequence
+	return true
 
 func _set_notifications_availability(availability: String) -> void:
 	if notifications_availability == availability:

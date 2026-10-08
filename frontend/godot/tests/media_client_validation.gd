@@ -397,15 +397,15 @@ func _run_client() -> void:
 	)
 	_emit_media(bridge, refreshed_request.get("request_id"), _snapshot(9, [], null))
 	_check(
-		snapshot_emissions[0] == 4
-		and int(backend.media_snapshot.get("sequence", 0)) == 10,
-		"P5.07 an older post-reconnect frame cannot regress retained state"
+		snapshot_emissions[0] == 5
+		and int(backend.media_snapshot.get("sequence", 0)) == 9,
+		"P5.07 the first post-reconnect snapshot replaces stale cache even with a lower sequence"
 	)
 	_emit_media(bridge, 0, _snapshot(11, [
 		_player("player:opaque-9", "Fresh Player", "stopped"),
 	], "player:opaque-9"))
 	_check(
-		snapshot_emissions[0] == 5
+		snapshot_emissions[0] == 6
 		and int(backend.media_snapshot.get("sequence", 0)) == 11,
 		"P5.07 a newer post-reconnect snapshot refreshes the retained state"
 	)
@@ -494,14 +494,14 @@ func _run_client() -> void:
 		control_rejections.size() == 8
 		and control_rejections[7][2] == "media_unavailable"
 		and backend.media_availability == "unavailable"
-		and availability_emissions[0] == 5,
+		and availability_emissions[0] == 7,
 		"P5.07 a media-unavailable control failure flips availability exactly once"
 	)
 	_emit_control_rejected(bridge, unavailable_control.get("request_id"), "player:opaque-9", "media_unavailable")
 	_check(
 		control_rejections.size() == 8
 		and backend.media_availability == "unavailable"
-		and availability_emissions[0] == 5,
+		and availability_emissions[0] == 7,
 		"P5.07 repeated control-driven unavailability stays silent"
 	)
 	_check(

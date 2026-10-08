@@ -64,6 +64,7 @@ run_godot phase1 --script res://tests/phase1_validation.gd
 run_godot stations --script res://tests/station_validation.gd
 run_godot launch-ux --script res://tests/launch_ux_validation.gd
 run_godot backend-client --script res://tests/backend_client_validation.gd
+run_godot restart-state --script res://tests/restart_state_validation.gd
 run_godot workspace-map --script res://tests/workspace_map_validation.gd
 run_godot session-binding --script res://tests/session_binding_validation.gd
 run_godot notification-feed --script res://tests/notification_validation.gd
