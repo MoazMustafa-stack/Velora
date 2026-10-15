@@ -1,9 +1,12 @@
 # D6.06–D6.09 experience review
 
-Status: implemented and locally validated on `cohesive-hub-experience` from
-merged foundation `57cfcb6`. Not pushed, merged, or owner-accepted. D6.05 was
-outside this implementation request and is still pending; D6.09 requires a
-fresh native/grayscale art review after it lands. Phase 6 is not complete.
+Historical checkpoint: D6.06–D6.09 was implemented and locally validated from
+merged foundation `57cfcb6`, then pushed through `8531764` on October 6.
+On October 8, D6.05 and D6.10–D6.12 were implemented and the new artwork was
+rechecked in native/grayscale fixtures. See [the current review](PERSONALIZATION_REVIEW.md)
+for current evidence and remaining acceptance. The owner reported testing most
+of the previous slice; this is not a complete recorded acceptance checklist.
+Phase 6 is not complete or merged.
 
 ## Implementation map
 
@@ -79,7 +82,11 @@ Run `./scripts/velora.sh dev` inside Hyprland. Then:
    accessibility review after D6.05's art/layout redesign.
 
 Keep D6.06–D6.08 in Review until owner acceptance. D6.09 also has an explicit
-D6.05 dependency; audio, remapping/controller and station UI are not done.
+D6.05 dependency, now implemented and awaiting final owner visual acceptance.
+Audio, keyboard remapping and station UI are implemented; see the current
+[release checklist](RELEASE_REVIEW.md). Existing controller code is experimental,
+not a requirement for the keyboard-only milestone. The original implementation
+evidence above is historical, not the latest gate result.
 
 ## Focused commit ledger
 

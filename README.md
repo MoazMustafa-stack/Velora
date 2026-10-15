@@ -5,7 +5,7 @@
 > visual direction, and Linux integrations are expected to change.
 
 [![Status: work in progress](https://img.shields.io/badge/status-work_in_progress-f59e0b)](#project-status)
-[![Phase: 6 frontend foundation](https://img.shields.io/badge/phase-6_frontend_foundation-22c55e)](#current-status)
+[![Phase: 6 frontend experience](https://img.shields.io/badge/phase-6_frontend_experience-22c55e)](#current-status)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-22c55e)](LICENSE)
 [![CI](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml/badge.svg)](https://github.com/MoazMustafa-stack/Velora/actions/workflows/ci.yml)
 [![Buy me a coffee](https://img.shields.io/badge/Support-Ko--fi-ff5e5b)](https://ko-fi.com/moazmustafa)
@@ -40,10 +40,19 @@ adds prioritized, clipped HUD regions, contextual first-run hints, distinct
 capability empty states, keyboard pause/help/settings/diagnostics, and persisted
 reduced motion with color-independent status markers. See the
 [experience review and manual checklist](frontend/godot/EXPERIENCE_REVIEW.md).
-It is locally validated, not yet merged or owner-accepted. D6.05's art/layout
-redesign is still pending, so D6.09 needs another accessibility review after
-that work. Audio cues, remapping/controller UI, station customization, and
-the final Phase 6 gate remain D6.10–D6.13 work.
+The experience branch now also implements D6.05 and D6.10–D6.12: seven
+grayscale-distinct, reachable world objects; an observatory panel; bounded local
+UI cues with independent mute/volume; conflict-checked keyboard remapping;
+registry-only station mapping. Existing experimental controller code remains
+present, but the product and current acceptance target are **keyboard-only**.
+See the [personalization review](frontend/godot/PERSONALIZATION_REVIEW.md).
+These features are locally validated, not yet merged or fully owner-accepted.
+Audio and final keyboard/visual acceptance remain manual checks. D6.13 now has
+a cumulative automated gate and crowded-UI benchmark; manual acceptance is still
+pending. See the [release checklist](frontend/godot/RELEASE_REVIEW.md).
+Phase 6 is not complete or released merely because automated checks pass.
+See the [roadmap](ROADMAP.md) for the bounded Desktop-file direction after
+current acceptance; document opening and folder traversal are not implemented.
 
 Phase 1.01–1.10 provides a Godot 4.7 pixel-perfect foundation, a 16 px tile
 hub, eight-direction movement with four-direction facing, sprinting, physical
@@ -121,7 +130,8 @@ The unified development runner exposes the common workflows:
 ./scripts/velora.sh build-bridge  # compile the Rust GDExtension
 ./scripts/velora.sh ipc-check     # live core ↔ Godot handshake test
 ./scripts/velora.sh check         # Godot acceptance tests + Rust workspace
-./scripts/velora.sh gate          # deterministic security/release checks
+./scripts/velora.sh gate          # cumulative checks + rendered UI benchmarks
+./scripts/velora.sh gate --headless # headless subset; not full acceptance
 ./scripts/velora.sh perf          # rendered integrated-GPU benchmark
 ./scripts/velora.sh all           # all automated and rendered checks
 ```
@@ -148,9 +158,17 @@ application-registry transfer, a real Core shutdown, and frontend reconnection.
 The performance check opens a rendered window and validates the integrated-GPU
 baseline.
 
+The Phase 6 gate also captures synthetic native/scaled/grayscale UI frames and
+runs a crowded-panel benchmark. It requires a graphical session by default;
+`gate --headless` explicitly leaves rendering unverified. Evidence paths and
+the remaining owner keyboard/audio/visual checks are in
+[RELEASE_REVIEW.md](frontend/godot/RELEASE_REVIEW.md). `all` invokes the same
+cumulative gate. GitHub CI currently runs Rust checks only; local gate evidence
+must not be described as a CI pass.
+
 ### Integrated graphics baseline
 
-P1.10 passed on Intel UHD Graphics (Comet Lake GT2) with Mesa 26.1.7, native
+Historical P1.10 passed on Intel UHD Graphics (Comet Lake GT2) with Mesa 26.1.7, native
 Wayland, and the Godot Compatibility renderer. Across 600 rendered frames at a
 960 × 540 window, the prototype averaged 60 FPS with a 17.05 ms p95 and 19.27
 ms maximum frame. The repeatable gate requires at least 55 FPS average and at

@@ -8,6 +8,8 @@ Godot Compatibility renderer. No downloaded art or fonts are introduced.
 | Floor, walls, path, threshold | `scripts/pixel_art.gd`: generated 64 × 16 atlas of four 16 × 16 tiles; hub builds boundary/collisions |
 | Player | Generated 16 × 24 sprites, four directions × two steps; player caches textures |
 | Application stations | Generated workstation texture; three registry-backed objects and state markers |
+| Capability objects | `hub_object.gd` / `pixel_art.gd`: cached 32 × 32 folded map, media box, flagged inbox and telescope; facing-aware interaction and fixed collision archetype |
+| Observatory panel | Four fixed two-line rows, aggregate telemetry and explicit stale/offline feedback; shared PanelShell |
 | HUD and pause | `scenes/main.tscn`, `ui/hud.gd`, `ui/pause_panel.gd`; fixed priority regions and shared PanelShell keyboard pages |
 | Notification feed | Four fixed two-line rows; `!! CRIT`, `! NORM`, `. LOW`; 32 tracked entries |
 | Media console | Three fixed two-line rows; `+ PLAY`, `= PAUSE`, `. STOP`; 16 tracked players, capability-specific controls |
@@ -37,11 +39,13 @@ For reproducible synthetic visual review (requires a graphical session):
 ```bash
 capture_dir="$(mktemp -d /tmp/velora-visual.XXXXXX)"
 VELORA_VISUAL_DIR="$capture_dir" godot --path frontend/godot \
-  --script res://tests/visual_foundation_fixture.gd
+  --script res://tests/experience_visual_fixture.gd
 ```
 
-The fixture disables backend auto-connect and exports native and scaled
-frames for populated, empty, waiting, unavailable, stale, and crowded views.
+The current fixture disables backend auto-connect **and processing timers**,
+preference IO and audio. It exports native/scaled/grayscale frames for populated,
+empty, stale and crowded views, controller labels, remapping, a 500-entry
+registry chooser and observatory states.
 It reads no live notifications, media or compositor data. Review these frames
 alongside `./scripts/velora.sh gate` and `./scripts/velora.sh perf`.
 
@@ -59,6 +63,15 @@ for ready / attention / offline. Workspace status markers compose `>` active,
 Feed urgency, media playback, waiting, disabled, failure and stale states retain
 explicit text/markers. No status information requires color or animation.
 
-This audit covers the current hub assets. D6.05's unified world-object art and
-room redesign are still pending and require another native/grayscale review
-before D6.09 can receive final acceptance.
+The D6.05 art/layout pass now supplies all seven world objects with distinct
+alpha silhouettes and a shared interaction tick. The lower approach lane and
+central corridor remain unobstructed in default/remapped-keyboard and synthetic
+controller physics tests. Native/grayscale captures are re-audited; owner final
+keyboard/visual review remains. Controller code is experimental and not a
+requirement for the current keyboard-only milestone. Local audio introduces no visual animation.
+Original generated audio and its bounded voice policy are documented in
+`AUDIO_ASSETS.md`.
+
+Script `.gd.uid` files are tiny source resource identifiers, not import caches;
+they are tracked alongside scripts. `.godot/`, binaries and private evidence
+remain ignored. See Godot's [UID guidance](https://godotengine.org/article/uid-changes-coming-to-godot-4-4/).
