@@ -1,6 +1,11 @@
 # Phase 6 prototype acceptance
 
 This is an evidence checklist, not a declaration that Phase 6 is complete.
+The 2026-10-16 [workshop redesign plan](WORKSHOP_PLAN.md) supersedes the former
+visual target. Keep the behavioral checks below; re-run them on the redesign.
+Native density choice, inspector/quick-launcher input ownership and updated art
+require new evidence. Do not approve the obsolete UI as a prerequisite to work,
+or treat a previous gate result as acceptance of new code.
 The product target is keyboard-only. Controller code already exists and is
 being left untouched for the owner to handle; physical-controller acceptance
 is **not** a requirement for this prototype milestone. Existing synthetic
@@ -67,7 +72,9 @@ actual result, PASS/FAIL, and evidence path. A blank item is **pending**, not PA
 | --- | --- | --- |
 | Default keyboard path | Reach all seven objects; facing, collision, prompts and Escape work; no controller needed | Pending |
 | Remapped keyboard path | Reject conflicting keys; cancel capture; remap, restart, use and reset bindings; Escape recovery remains usable | Pending |
-| Native/scaled visuals | Readable 320×180 and integer-scaled views; long text clips; player and objects remain distinct in grayscale | Pending |
+| Native/scaled visuals | Validate the canvas selected in R6.01 and integer-scaled views; long text clips; player and objects remain distinct in grayscale | Pending |
+| Inspector ownership | Persistent selected-app state does not steal movement; explicit focus/back and late launch feedback remain correct | Pending |
+| Quick launcher | Bounded stable-ID selection; one launch per confirmation; cancel restores focus; no input leaks to world | Pending |
 | Offline/reconnect | Start frontend first; start Core; stop/restart only the test Core; useful state returns without restarting Godot | Pending |
 | Pause updates | Core/media/feed/telemetry changes do not erase modal ownership or strand player input; closing restores useful prompts | Pending |
 | Empty/unavailable states | Distinguish empty registry, no players, no notifications, notifications disabled, monitor unavailable/restricted and Core offline | Pending |

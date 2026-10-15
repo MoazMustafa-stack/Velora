@@ -51,6 +51,11 @@ Audio and final keyboard/visual acceptance remain manual checks. D6.13 now has
 a cumulative automated gate and crowded-UI benchmark; manual acceptance is still
 pending. See the [release checklist](frontend/godot/RELEASE_REVIEW.md).
 Phase 6 is not complete or released merely because automated checks pass.
+On 2026-10-16 the visual direction was revised to a walkable pixel workshop
+with a persistent application inspector. Native layout/resolution validation
+comes first; the redesign is planned, not implemented or accepted. Existing
+systems and regression evidence are retained. See the
+[workshop implementation plan](frontend/godot/WORKSHOP_PLAN.md).
 See the [roadmap](ROADMAP.md) for the bounded Desktop-file direction after
 current acceptance; document opening and folder traversal are not implemented.
 
