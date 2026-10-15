@@ -1,7 +1,9 @@
-# R6.01 native density proof — in progress
+# R6.01 native density proof — accepted
 
 Branch: workshop-foundation, from documentation head f660337 / experience
-baseline fc9ce6e. No native resolution or final artwork has been accepted.
+baseline fc9ce6e. On 2026-10-16 the owner approved the 640×360 native canvas
+with the lower inspector after reviewing the native comparison. Final artwork
+and production inspector/input behavior are not accepted by this decision.
 This blockout is not R6.05's production inspector and sends no launch intents.
 
 ## Fresh pre-change baseline — 2026-10-16
@@ -42,8 +44,9 @@ JSON and synthetic native/scaled/grayscale frames are retained privately.
 
 ## Acceptance
 
-Owner native density/layout choice remains pending. R6.02–R6.05 remain
-unstarted. Production project.godot, design tokens, world art and physics remain
+R6.01's native proof and density decision are accepted: **640×360 with the lower
+inspector**. R6.02–R6.05 remain unstarted. Production project.godot, design
+tokens, world art and physics remain
 unchanged. Initial candidate renders, all seven approach/visibility checks and
 both benchmark workloads pass. Final combined-code-head validation at 41f01ec:
 `check`, `ipc-check` and the full graphical `gate` all PASS. 226 Rust tests,
@@ -66,8 +69,13 @@ Core idle CPU is 0.0% with 20 KiB RSS growth. Private-bus idle CPU is 0.0%,
 Synthetic evidence is retained privately with native, grayscale, 720p/1080p
 exports for each state and all seven approaches. No real apps, production
 sockets/buses, preferences or personal desktop contents were used. The proposed
-640×360 canvas/lower inspector is recommended, not approved. All manual release
-checks and later-card production implementation remain pending.
+640×360 canvas/lower inspector is now owner-approved for subsequent work.
+All broader manual release checks and later-card implementation remain pending.
+
+This approval closes the R6.01 density-proof card only. It does not assert that
+the production frontend already uses the new canvas or that Phase 6 is complete.
+The owner requested review and branch publication for now; do not start R6.02
+or later as part of that publication task.
 
 ## Reproduce
 

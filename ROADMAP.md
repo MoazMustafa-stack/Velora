@@ -23,8 +23,9 @@ module responsibilities, dependencies, commit/review slices and acceptance.
   merging a release. Historical gate results do not validate the new design.
 
 Existing D6 card numbers are retained as implementation history. R6.01's isolated
-native proof and full local gate pass; it is In Review awaiting owner density
-choice. R6.02–R6.10 remain Todo. See the [proof review](frontend/godot/WORKSHOP_REVIEW.md)
+native proof and full local gate pass; the owner approved 640×360 with the lower
+inspector on 2026-10-16. R6.01 is Done (density proof only); R6.02–R6.10 remain
+Todo. See the [proof review](frontend/godot/WORKSHOP_REVIEW.md)
 for measurements and limitations; accepting a direction does not complete cards.
 
 | Card | Implementation |
@@ -40,7 +41,8 @@ for measurements and limitations; accepting a direction does not complete cards.
 | R6.09 | Cumulative regression and performance gate |
 | R6.10 | Owner review, demonstration and release decision |
 
-The canvas resolution remains a native validation decision, not a promise.
+The selected native canvas is 640×360 with a lower inspector. Production canvas
+migration is not implemented by the proof; subsequent cards apply the decision.
 Retain Core, bridge, protocol v5, launch policy and existing capability models.
 The redesign adds no filesystem authority or new Linux integration.
 

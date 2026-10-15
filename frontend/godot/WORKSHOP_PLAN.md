@@ -1,7 +1,7 @@
 # Workshop redesign implementation plan
 
-Decision date: 2026-10-16. Status: direction accepted; R6.01 isolated proof is
-implemented and locally validated, awaiting owner density/layout choice.
+Decision date: 2026-10-16. Status: direction and R6.01 native proof accepted.
+The owner selected 640×360 with the lower inspector after local validation.
 R6.02–R6.10 production implementation has not started. See WORKSHOP_REVIEW.md.
 This document supersedes the old Phase 6 visual target, not its implementation
 history or security/regression requirements. New cards use R6 identifiers so
@@ -22,7 +22,8 @@ Do not merge their HTML, switcher or preview runner into production.
 
 Selected: world-first composition, distinct app silhouettes, persistent status.
 Not selected automatically: a permanent left application rail, CRT effects,
-browser font sizes, a particular canvas resolution, or a new theme matrix.
+browser font sizes or a new theme matrix. Native resolution was decided
+separately through R6.01: 640×360, with the lower inspector.
 Use semantic color, shape and text together; decorative animation stays optional.
 
 ## 2. Retain versus rework
@@ -43,17 +44,21 @@ configuration edits in this milestone.
 
 ## 3. Native layout decision before detailed art
 
-R6.01 compares the existing **320×180** canvas with a **640×360 candidate** using
-the same synthetic content. 640×360 is a recommendation to test, not an accepted
-resolution: it supports integer scaling at 720p and 1080p but has four times as
-many internal pixels. Measure it; do not infer equal performance.
+R6.01 compared the existing **320×180** canvas with a **640×360 candidate** using
+the same synthetic content. The owner approved **640×360 with the lower
+inspector** on 2026-10-16 after both candidates passed native proof benchmarks.
+The comparison remains as evidence, not two permanent production modes.
+640×360 supports integer scaling at 720p and 1080p but has four times as many
+internal pixels. Keep measuring; do not infer equal performance. Production
+canvas migration belongs to subsequent implementation, not the proof's approval.
 
-Keep the world dominant. Compare a compact lower/right inspector placement,
+Keep the world dominant and use the approved compact lower inspector placement,
 showing app identity, availability, running state, last action and one contextual
 keyboard hint. The inspector must not cover reachable objects or the player.
 A permanent application rail is not required; direct selection is a temporary
-keyboard drawer. Do not develop two permanent resolution modes. Select one
-after native owner review; if 640 fails, simplify the inspector at 320 instead.
+keyboard drawer. Do not develop two permanent resolution modes. Resolve future
+performance failures against the recorded budgets; do not silently change the
+owner-approved resolution to make a failing test pass.
 
 Record the relationship between world coordinates, camera, tile/art size and UI
 coordinates. Preserve collision and interaction distances deliberately; changing
@@ -135,8 +140,9 @@ parallel UI system or a generic multi-renderer architecture.
 
 ## 6. Kanban cards
 
-R6.01 is **In Review** after its native proof and full local gate; owner density
-choice remains pending. R6.02–R6.10 remain **Todo**. No card is done because a
+R6.01 is **Done (native density proof)** after its native proof, full local gate
+and owner approval of 640×360 with the lower inspector. R6.02–R6.10 remain
+**Todo**. No card is done because a
 corresponding mockup or old implementation exists. Each card includes
 focused tests with its implementation, not a testing phase deferred to the end.
 
