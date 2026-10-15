@@ -72,11 +72,7 @@ case "$command_name" in
     "$script_dir/check-performance.sh"
     ;;
   all)
-    "$script_dir/check-godot.sh"
-    "$script_dir/check.sh"
-    "$script_dir/check-dev.sh"
-    "$script_dir/check-ipc.sh"
-    "$script_dir/check-performance.sh"
+    exec "$script_dir/check-phase-six.sh" "${@:2}"
     ;;
   help|-h|--help)
     usage

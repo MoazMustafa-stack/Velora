@@ -11,6 +11,8 @@ export XDG_DATA_HOME="$velora_check_dir/data"
 export XDG_CONFIG_HOME="$velora_check_dir/config"
 export XDG_CACHE_HOME="$velora_check_dir/cache"
 export XDG_RUNTIME_DIR="$velora_check_dir/runtime"
+# An inherited production override must not bypass the isolated runtime dir.
+export VELORA_SOCKET="$XDG_RUNTIME_DIR/velora.sock"
 mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 
@@ -66,6 +68,7 @@ VELORA_TEST_CONTROLLER=1 run_godot controller-world --script res://tests/world_l
 VELORA_TEST_REMAPPED=1 run_godot remapped-world --script res://tests/world_layout_validation.gd
 run_godot mapping-model --script res://tests/station_mapping_model_validation.gd
 run_godot mapping-ui --script res://tests/station_mapping_ui_validation.gd
+run_godot phase-six-acceptance --script res://tests/phase_six_acceptance.gd
 
 echo "Godot scene validation passed."
 bash "$script_dir/check-bridge-worker.sh"
