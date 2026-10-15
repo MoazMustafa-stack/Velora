@@ -15,18 +15,24 @@ mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR
 chmod 700 "$XDG_RUNTIME_DIR"
 
 project_dir="$(cd "$script_dir/../frontend/godot" && pwd)"
+test_timeout="${VELORA_TEST_TIMEOUT_SECONDS:-120}"
+if [[ ! "$test_timeout" =~ ^[1-9][0-9]*$ ]] || (( test_timeout > 600 )); then
+  echo "VELORA_TEST_TIMEOUT_SECONDS must be an integer from 1 to 600." >&2
+  exit 2
+fi
 run_godot() {
   local name="$1"
   shift
   local godot_log="$velora_check_dir/$name.log"
 
   set +e
-  godot --headless --disable-crash-handler --path "$project_dir" "$@" 2>&1 | tee "$godot_log"
+  timeout --signal=TERM --kill-after=5s "${test_timeout}s" \
+    godot --headless --disable-crash-handler --path "$project_dir" "$@" 2>&1 | tee "$godot_log"
   local godot_status=${PIPESTATUS[0]}
   set -e
 
   if (( godot_status != 0 )); then
-    echo "Godot $name validation exited with status $godot_status." >&2
+    echo "Godot $name validation exited with status $godot_status (124 means timeout)." >&2
     return "$godot_status"
   fi
   if rg -q 'SCRIPT ERROR|Parse Error|Compile Error|Failed to load script|Failed loading resource' "$godot_log"; then
