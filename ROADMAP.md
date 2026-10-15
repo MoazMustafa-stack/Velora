@@ -22,8 +22,10 @@ module responsibilities, dependencies, commit/review slices and acceptance.
   together with the redesign acceptance before claiming Phase 6 complete or
   merging a release. Historical gate results do not validate the new design.
 
-Existing D6 card numbers are retained as implementation history. All new revision
-cards below are Todo; accepting a browser direction does not complete them.
+Existing D6 card numbers are retained as implementation history. R6.01's isolated
+native proof and full local gate pass; it is In Review awaiting owner density
+choice. R6.02–R6.10 remain Todo. See the [proof review](frontend/godot/WORKSHOP_REVIEW.md)
+for measurements and limitations; accepting a direction does not complete cards.
 
 | Card | Implementation |
 | --- | --- |

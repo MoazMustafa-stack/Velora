@@ -1,6 +1,8 @@
 # Workshop redesign implementation plan
 
-Decision date: 2026-10-16. Status: direction accepted; implementation not started.
+Decision date: 2026-10-16. Status: direction accepted; R6.01 isolated proof is
+implemented and locally validated, awaiting owner density/layout choice.
+R6.02–R6.10 production implementation has not started. See WORKSHOP_REVIEW.md.
 This document supersedes the old Phase 6 visual target, not its implementation
 history or security/regression requirements. New cards use R6 identifiers so
 existing D6.01–D6.13 cards and evidence remain intelligible.
@@ -133,8 +135,9 @@ parallel UI system or a generic multi-renderer architecture.
 
 ## 6. Kanban cards
 
-All R6 cards start **Todo**. The direction decision is accepted; no card is done
-because a corresponding mockup or old implementation exists. Each card includes
+R6.01 is **In Review** after its native proof and full local gate; owner density
+choice remains pending. R6.02–R6.10 remain **Todo**. No card is done because a
+corresponding mockup or old implementation exists. Each card includes
 focused tests with its implementation, not a testing phase deferred to the end.
 
 ### R6.01 — Native composition and density proof · Medium

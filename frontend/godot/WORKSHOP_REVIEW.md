@@ -42,6 +42,82 @@ JSON and synthetic native/scaled/grayscale frames are retained privately.
 
 ## Acceptance
 
-Pending: rendered comparison, both candidate benchmarks, approach visibility,
-owner native density/layout choice. R6.02–R6.05 remain unstarted. Production
-project.godot, design tokens, world art and physics remain unchanged.
+Owner native density/layout choice remains pending. R6.02–R6.05 remain
+unstarted. Production project.godot, design tokens, world art and physics remain
+unchanged. Initial candidate renders, all seven approach/visibility checks and
+both benchmark workloads pass. Final combined-code-head validation at 41f01ec:
+`check`, `ipc-check` and the full graphical `gate` all PASS. 226 Rust tests,
+strict Clippy, all frontend/static-security/private-bus/resource checks, owned
+child cleanup, IPC restart, old rendered fixtures and both new native proofs.
+
+| Final candidate workload | Average FPS | p95 ms | Maximum ms |
+| --- | --- | --- | --- |
+| 320×180 movement / static synthetic UI | 101.90 | 17.02 | 20.85 |
+| 320×180 crowded + mock inspector | 82.03 | 17.65 | 83.16 |
+| 640×360 movement / static synthetic UI | 60.00 | 17.33 | 18.53 |
+| 640×360 crowded + mock inspector | 58.25 | 17.65 | 66.54 |
+
+All meet >=55 FPS / <=25 ms p95. Scheduling and presentation differ, so these
+are not an optimization claim; retain the maximum outliers. The original
+movement/crowded fixtures also pass (60.00 / 58.82 FPS, 17.21 / 17.33 ms p95).
+Core idle CPU is 0.0% with 20 KiB RSS growth. Private-bus idle CPU is 0.0%,
+1888 KiB fixed RSS overhead, 0 KiB growth. No GitHub CI result is claimed.
+
+Synthetic evidence is retained privately with native, grayscale, 720p/1080p
+exports for each state and all seven approaches. No real apps, production
+sockets/buses, preferences or personal desktop contents were used. The proposed
+640×360 canvas/lower inspector is recommended, not approved. All manual release
+checks and later-card production implementation remain pending.
+
+## Reproduce
+
+```bash
+./scripts/velora.sh check
+./scripts/velora.sh ipc-check
+./scripts/velora.sh gate
+# Focused native layout/performance proof (real graphical session required):
+./scripts/check-workshop-layout.sh
+```
+
+`check-godot.sh` includes the headless composition bounds/isolation test. The
+graphical gate also calls the focused runner, so the new native proof is not an
+unregistered test. Set VELORA_WORKSHOP_REPORT_DIR to a fresh evidence directory
+to retain output at a chosen location. Each rendered case has a 180-second
+deadline. A failure or timeout fails the runner, never a skipped PASS.
+
+The compositor did not honor the requested 1280×720 window: Hyprland tiled it
+to 960×1043. Reports record actual window and logical content sizes. Native
+renders are true 320×180 / 640×360 SubViewport images, not downsampled desktop
+screenshots. 1280×720 and 1920×1080 files are nearest/integer exports of those
+images, not claims of physical fullscreen rendering at both output sizes.
+No window-manager rules or configuration were changed to force a size.
+
+## Independent review — fixed code head 41f01ec versus f660337
+
+### Standards
+
+No actionable documented-standard or practical code-smell findings. Benchmark
+hooks have concrete reuse; candidate rendering stays outside production code.
+
+### Spec
+
+No blocking implementation defect or later-card scope expansion found. Two
+coverage limits must remain explicit:
+
+- The `reduced-motion` image is an idle/static sample, not animation evidence.
+  The fixture leaves reduced motion enabled for all subsequent physical routes;
+  the separate `tests/reduced_motion_validation.gd` regression directly checks
+  animation suppression, unchanged movement/facing/speed, persistence and reset.
+  Both are included in the cumulative checks; do not claim the still image alone
+  establishes motion behavior.
+- The production HUD is hidden in the blockout. Approach images prove full
+  player/object sprite visibility against the candidate header and mock lower
+  strip. Production proximity prompts and inspector interaction still require
+  R6.04–R6.05 integration and native review. This proof does not accept that
+  future HUD/input behavior.
+
+The first rendered route attempt was interrupted after it stopped progressing
+following one object; it is not a passing run. The route helper now always
+yields a physics frame even on zero-distance legs. Corrected runs reach all
+seven objects with progress logs and bounded deadlines. Known libdecor/xdg icon
+warnings do not prevent rendering; retain them in logs rather than hiding them.

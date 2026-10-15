@@ -56,6 +56,10 @@ with a persistent application inspector. Native layout/resolution validation
 comes first; the redesign is planned, not implemented or accepted. Existing
 systems and regression evidence are retained. See the
 [workshop implementation plan](frontend/godot/WORKSHOP_PLAN.md).
+R6.01 now has an isolated native 320×180 / 640×360 blockout with passing local
+checks and rendered benchmarks; the owner density choice remains pending.
+It is not a production UI replacement. See the
+[native proof and review limits](frontend/godot/WORKSHOP_REVIEW.md).
 See the [roadmap](ROADMAP.md) for the bounded Desktop-file direction after
 current acceptance; document opening and folder traversal are not implemented.
 
