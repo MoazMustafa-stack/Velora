@@ -19,9 +19,11 @@ func run() -> void:
 			check(output.x % size.x == 0 and output.y % size.y == 0, "720p and 1080p use integer scaling")
 		var fixture := Composition.new(size)
 		root.add_child(fixture)
+		fixture.present(root)
 		await physics_frame
 		await process_frame
 		check(fixture.world.size == Vector2i(320, 128), "Both densities preserve identical world viewport/FOV")
+		check(root.content_scale_size == size, "Presentation uses the candidate canvas, not production 320")
 		check(fixture.main.get_node("World").scale == Vector2.ONE, "World physics root is not scaled")
 		check(fixture.main.player.walk_speed == 48.0 and fixture.main.player.sprint_speed == 72.0, "Movement speeds stay unchanged")
 		check(not fixture.main.backend.auto_connect and not fixture.main.backend.is_processing(), "No transport or reconnect timers")

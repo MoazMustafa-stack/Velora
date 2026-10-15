@@ -23,10 +23,7 @@ func run() -> void:
 		push_error("D6.13 performance requires a real rendered session")
 		quit(1)
 		return
-	main = load("res://scenes/main.tscn").instantiate()
-	main.load_preferences = false
-	main.get_node("BackendClient").auto_connect = false
-	root.add_child(main)
+	main = create_main()
 	await process_frame
 	main.backend.set_process(false)
 	main.ui_audio.enabled = false
@@ -70,6 +67,7 @@ func run() -> void:
 		"minimum_average_fps": MIN_FPS, "maximum_p95_frame_ms": MAX_P95_MS,
 		"workload": "movement; feed32; media16; map20; chooser600 capped512; nullable telemetry; snapshots every6 frames; registry every30 frames",
 		"scope": "UI-bound synthetic stress, not live transport or wire-budget validation; preferences/backend/audio disabled"}
+	report.merge(benchmark_metadata(), true)
 	var path := OS.get_environment("VELORA_PHASE_SIX_PERF_REPORT")
 	if path.is_empty(): path = "/tmp/velora-phase-six-performance.json"
 	var file := FileAccess.open(path, FileAccess.WRITE)
@@ -83,6 +81,16 @@ func run() -> void:
 	main.queue_free()
 	await process_frame
 	quit(0 if report.passed else 1)
+
+func create_main() -> Node:
+	var scene = load("res://scenes/main.tscn").instantiate()
+	scene.load_preferences = false
+	scene.get_node("BackendClient").auto_connect = false
+	root.add_child(scene)
+	return scene
+
+func benchmark_metadata() -> Dictionary:
+	return {}
 
 func update_snapshots(frame: int) -> void:
 	telemetry.cpu.availability = "warming_up" if frame % 12 == 0 else "available"

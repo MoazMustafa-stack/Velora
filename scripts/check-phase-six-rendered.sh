@@ -38,5 +38,6 @@ run_fixture() {
 VELORA_VISUAL_DIR="$output_dir/frames" run_fixture layouts --script res://tests/experience_visual_fixture.gd
 VELORA_PERF_REPORT="$output_dir/movement-performance.json" run_fixture movement --script res://tests/performance_validation.gd
 VELORA_PHASE_SIX_PERF_REPORT="$output_dir/crowded-performance.json" run_fixture crowded --script res://tests/phase_six_performance.gd
+bash "$script_dir/check-workshop-layout.sh"
 echo "PASS: D6.13 synthetic rendered layout and performance checks"
 echo "Retained evidence: $output_dir"

@@ -95,6 +95,10 @@ func _ready() -> void:
 	for panel in [main.pause_panel, main.workspace_map, main.notification_feed, main.media_console, main.observatory]:
 		panel.set_process_unhandled_input(false)
 		panel.hide()
+		# Keep legacy modal rendering at its original full-canvas coordinates.
+		# Do not crop benchmark panels to the smaller scrolling world viewport.
+		panel.reparent(canvas, false)
+		panel.transform = Transform2D.IDENTITY.scaled(Vector2.ONE * scale_factor)
 	main.backend.state = BackendClient.ConnectionState.READY
 	main.backend.applications_changed.emit([
 		{"id": "code.desktop", "name": "Fixture Editor"},
@@ -126,6 +130,10 @@ func set_sample(sample: String) -> void:
 	modal.visible = sample == "paused"
 
 func present(window: Window) -> void:
+	# The compositor may tile the window instead of honoring --resolution.
+	# Use the candidate's logical canvas and the project's keep/integer policy,
+	# never squeeze a 640-native texture through the production 320 canvas.
+	window.content_scale_size = native_size
 	var display := TextureRect.new()
 	display.texture = canvas.get_texture()
 	display.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
