@@ -39,4 +39,4 @@ for width in 320 640; do
   done
 done
 echo "PASS: isolated R6.01 native layout/physics/performance evidence: $output"
-echo "PENDING: owner density choice; no production resolution or art acceptance."
+echo "REMINDER: this runner validates the native proof, not production UI/art acceptance."

@@ -107,6 +107,14 @@ No window-manager rules or configuration were changed to force a size.
 No actionable documented-standard or practical code-smell findings. Benchmark
 hooks have concrete reuse; candidate rendering stays outside production code.
 
+Publication review of f660337...5fe0b05 found one non-blocking consistency
+issue: the proof runner's final message still called the density choice pending.
+It now prints a decision-neutral proof-only reminder. This is a message-only
+shell change; runtime fixture behavior and benchmark thresholds are unchanged.
+Fresh headless geometry/isolation, Bash syntax and ShellCheck checks pass. The
+full graphical results above remain attributed to code head 41f01ec, not a
+claim that the entire suite was rerun for the subsequent documentation/message.
+
 ### Spec
 
 No blocking implementation defect or later-card scope expansion found. Two
