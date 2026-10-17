@@ -83,7 +83,7 @@ func _run() -> void:
 		"process_id": 1234,
 	}))
 	_check(workstation.status == "ready", "P2.09 launch success restores the station")
-	_check(hud.status.text.contains("LAUNCHED"), "P2.09 launch success is visible")
+	_check(hud.status.text.contains("LAUNCH ACCEPTED"), "R6.06 spawn acceptance is visible without claiming window readiness")
 
 	backend._launch_request_id = 42
 	backend._launch_desktop_id = "code.desktop"

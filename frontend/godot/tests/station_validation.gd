@@ -71,8 +71,8 @@ func _run() -> void:
 	main._on_interaction_requested(workstation)
 	await process_frame
 	_check(
-		backend.last_requested_desktop_id == "code.desktop",
-		"P2.08 resolved station reaches the typed launch boundary"
+		backend.last_requested_desktop_id.is_empty(),
+		"R6.06 offline station is rejected before the typed transport boundary"
 	)
 	_check(workstation.status == "ready", "P2.09 failed offline launch leaves station usable")
 	_check(
@@ -84,16 +84,19 @@ func _run() -> void:
 		"P2.09 reports the actual offline launch failure"
 	)
 
+	backend.state = BackendClient.ConnectionState.READY
+	backend.state_changed.emit(backend.state)
+	backend.applications_changed.emit(backend.applications.duplicate(true))
 	await _approach(main, Vector2(224, 82))
 	_check(main.player.active_interactable == terminal_station, "Missing application fixture remains physically reachable")
 	main._on_interaction_requested(terminal_station)
 	await process_frame
 	_check(
-		backend.last_requested_desktop_id == "code.desktop",
+		backend.last_requested_desktop_id.is_empty(),
 		"P2.08 unavailable station does not request a launch"
 	)
 	_check(
-		hud.status.text.contains("APPLICATION NOT FOUND"),
+		hud.status.text.contains("APPLICATION UNAVAILABLE"),
 		"P2.08 unavailable interaction reports the missing application"
 	)
 

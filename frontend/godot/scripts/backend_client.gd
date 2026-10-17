@@ -546,7 +546,7 @@ func _on_line_received(payload: String) -> void:
 				"LAUNCHED " + label,
 				false
 			)
-			_emit_ux_status("launch_successful", "LAUNCHED // " + label, "ready", 3.0)
+			_emit_ux_status("launch_successful", "LAUNCH ACCEPTED // " + label, "ready", 3.0)
 			connection_changed.emit("CORE // LAUNCHED // %s // PID %d" % [desktop_id, process_id])
 		"launch_rejected":
 			_on_launch_rejected(message)

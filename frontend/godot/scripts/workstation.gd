@@ -3,7 +3,7 @@ extends StaticBody2D
 const PixelArt = preload("res://scripts/pixel_art.gd")
 const Actions = preload("res://scripts/input_actions.gd")
 
-signal status_changed(message: String, tone: String)
+signal launch_requested(desktop_id: String)
 
 @export var desktop_id := "code.desktop"
 @export var display_name := "VS CODE"
@@ -60,17 +60,7 @@ func apply_running_state(state: String, location := "", window_count := 0) -> vo
 	running_window_count = window_count
 
 func interact() -> void:
-	if not registry_checked:
-		status = "offline"
-		_refresh_sprite()
-		status_changed.emit(
-			"VELORA // CORE OFFLINE // REGISTRY UNAVAILABLE",
-			"failure"
-		)
-	elif application.is_empty():
-		status = "offline"
-		_refresh_sprite()
-		status_changed.emit("VELORA // APPLICATION NOT FOUND", "failure")
+	launch_requested.emit(desktop_id)
 
 func bind_application(value: Dictionary) -> void:
 	registry_checked = true

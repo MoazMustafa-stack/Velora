@@ -11,6 +11,7 @@ const Mappings = preload("res://scripts/station_mappings.gd")
 const WorkshopView = preload("res://ui/workshop_view.gd")
 const Selection = preload("res://scripts/application_selection.gd")
 const Inspector = preload("res://ui/application_inspector.gd")
+const LaunchActions = preload("res://scripts/application_actions.gd")
 
 # Tests and performance fixtures disable all preference IO, or inject a temp path.
 @export var load_preferences := true
@@ -23,7 +24,7 @@ var selection := Selection.new()
 # Display-only summaries of accepted BackendClient events, never request state
 # or a second transport/reconnect engine. Only the latest launch event is held.
 var _inspection_stage := ""
-var _inspection_feedback: Dictionary = {}
+var application_actions: RefCounted
 var settings: RefCounted
 var onboarding: RefCounted
 var preferences_error: Error = OK
@@ -99,6 +100,10 @@ func _ready() -> void:
 		Overlay.Mode.OBSERVATORY: observatory,
 	}, inspector)
 	overlays.changed.connect(_on_context_changed)
+	application_actions = LaunchActions.new(backend)
+	application_actions.changed.connect(_refresh_inspector)
+	application_actions.feedback_changed.connect(_on_launch_status_changed)
+	if inspector != null: inspector.launch_requested.connect(application_actions.request_launch)
 	player.interaction_changed.connect(hud.set_interaction_prompt)
 	player.target_changed.connect(_on_nearby_target_changed)
 	player.interaction_changed.connect(func(_prompt): _refresh_inspector())
@@ -109,10 +114,9 @@ func _ready() -> void:
 	observatory.observatory_closed.connect(func(): overlays.close(Overlay.Mode.OBSERVATORY))
 	for station in get_tree().get_nodes_in_group("application_stations"):
 		_stations.append(station)
-		station.status_changed.connect(_on_station_status_changed)
+		station.launch_requested.connect(application_actions.request_launch)
 	_apply_station_mappings()
 	backend.ux_status_changed.connect(_on_backend_ux_status)
-	backend.launch_status_changed.connect(_on_launch_status_changed)
 	backend.applications_changed.connect(_on_applications_changed)
 	backend.session_snapshot_changed.connect(_on_session_snapshot_changed)
 	backend.session_availability_changed.connect(_on_session_availability_changed)
@@ -310,7 +314,7 @@ func _input(event: InputEvent) -> void:
 		# Own this context before native GUI ui_accept can bypass remapped
 		# confirm, or the same Enter can fall through into world activation.
 		get_viewport().set_input_as_handled()
-		if Actions.pressed(event, "confirm"): overlays.close(Overlay.Mode.INSPECTOR)
+		if Actions.pressed(event, "confirm"): inspector.confirm()
 		elif Actions.pressed(event, "workspace_map"): _toggle_workspace_map()
 		elif Actions.pressed(event, "notification_feed"): _toggle_notification_feed()
 		elif Actions.pressed(event, "media_console"): _toggle_media_console()
@@ -355,9 +359,10 @@ func _refresh_inspector() -> void:
 		"registry_empty": _registry_received and _applications_by_id.is_empty(),
 		"nearby_prompt": hud.prompt.text,
 		"focus_hint": "[%s] BACK" % Actions.binding_label("back", 1) if modal else "[%s] INSPECT" % Actions.binding_label("focus_inspector", 1),
-		"back_hint": "[%s] BACK / [%s] RETURN TO WORLD" % [Actions.binding_label("back", 1), Actions.binding_label("confirm", 1)],
+		"back_hint": "[%s] BACK / [%s] LAUNCH SELECTED" % [Actions.binding_label("back", 1), Actions.binding_label("confirm", 1)],
 		"world_locked": modal,
-		"feedback": _inspection_feedback,
+		"feedback": application_actions.feedback_for(view.selected_id) if application_actions != null else {},
+		"action": application_actions.describe(view.selected_id) if application_actions != null else {},
 		"running_state": observed.state,
 		"running_location": observed.location,
 		"running_windows": observed.windows,
@@ -465,10 +470,6 @@ func _refresh_station_running_states(snapshot: Dictionary) -> void:
 			int(state["windows"])
 		)
 
-func _on_station_status_changed(message: String, tone: String) -> void:
-	if tone == "failure": ui_audio.play_cue("reject")
-	hud.show_transient(message, tone, 3.0)
-
 func _on_backend_ux_status(
 	stage: String,
 	message: String,
@@ -505,14 +506,13 @@ func _on_launch_status_changed(
 	message: String,
 	retryable: bool
 ) -> void:
-	_inspection_feedback = {"desktop_id": desktop_id, "stage": stage, "message": message.left(160), "retryable": retryable}
 	_refresh_inspector()
+	if stage == "launch_failed": hud.show_transient("VELORA // " + message, "failure", 3.0)
 	if stage in ["launch_successful", "launch_failed"]:
 		ui_audio.play_cue("confirm" if stage == "launch_successful" else "reject")
 	for station in _stations:
 		if "desktop_id" in station and station.desktop_id == desktop_id:
 			station.apply_launch_feedback(stage, message, retryable)
-			return
 
 func _on_interaction_requested(target: Node) -> void:
 	# Inspection can outlive proximity, but it can never grant world authority.
@@ -521,15 +521,6 @@ func _on_interaction_requested(target: Node) -> void:
 	if target.has_method("interact"):
 		ui_audio.play_cue("interact")
 		onboarding.observe("interact")
-		if "desktop_id" in target:
-			var registry_rejected: bool = (
-				"registry_checked" in target
-				and target.registry_checked
-				and target.has_method("is_application_available")
-				and not target.is_application_available()
-			)
-			if not registry_rejected:
-				backend.launch_app(target.desktop_id)
 		target.interact()
 
 func _on_applications_changed(applications: Array) -> void:
@@ -542,6 +533,7 @@ func _on_applications_changed(applications: Array) -> void:
 			var desktop_id := String(application.get("id", ""))
 			if Store._valid_desktop_id(desktop_id):
 				_applications_by_id[desktop_id] = application
+	application_actions.set_registry(_applications_by_id)
 	_apply_station_mappings()
 	pause_panel.set_registry(_applications_by_id)
 

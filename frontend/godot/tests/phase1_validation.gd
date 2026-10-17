@@ -46,6 +46,8 @@ func _run() -> void:
 	var detector := player.get_node("InteractionDetector") as Area2D
 	var backend := main.get_node("BackendClient")
 	var hud := main.get_node("HUD")
+	var intents: Array[String] = []
+	workstation.launch_requested.connect(func(id): intents.append(id))
 
 	_check(ground != null and not ground.get_used_cells().is_empty(), "P1.02 builds the hub ground with TileMapLayer")
 	_check(walls != null and walls.get_used_cells().size() == 60, "P1.02 builds a closed 20 x 12 room boundary")
@@ -94,7 +96,7 @@ func _run() -> void:
 	_check(workstation.interaction_prompt() == "[E] USE  VS CODE", "P1.05 exposes a clear interaction prompt")
 	player._unhandled_input(_action_event("interact"))
 	await process_frame
-	_check(backend.last_requested_desktop_id == "code.desktop", "P1.05 E/Enter interaction reaches the target")
+	_check(intents == ["code.desktop"], "P1.05 E/Enter emits one intent from the nearby target")
 
 	player.position = Vector2(80, 130)
 	player._unhandled_input(_action_event("menu"))
@@ -117,7 +119,7 @@ func _run() -> void:
 	_check(station_ids.has("code.desktop") and station_ids.has("firefox.desktop") and station_ids.has("kitty.desktop"), "P1.07 stations carry semantic desktop IDs")
 	_check(main.world.get_node("Objects/BrowserStation").interaction_prompt() == "[E] USE  FIREFOX", "P1.07 station prompts are configured per application")
 
-	_check(backend.last_requested_desktop_id == "code.desktop", "P1.08 interaction reaches the typed backend boundary")
+	_check(backend.last_requested_desktop_id.is_empty(), "R6.06 offline intent sends no IPC request")
 	_check(not backend.connected, "P1.08 Phase 1 remains offline-safe")
 	_check(hud.status.text.contains("CORE OFFLINE"), "P1.08 HUD reports the safe offline result")
 
@@ -139,7 +141,7 @@ func _run() -> void:
 		actions_have_keys = actions_have_keys and has_key
 	_check(actions_have_keys, "P1.09 every required action has a keyboard binding")
 	_check(Input.mouse_mode != Input.MOUSE_MODE_CAPTURED, "P1.09 never captures the mouse")
-	_check(not main.menu_open and player.input_enabled and backend.last_requested_desktop_id == "code.desktop", "P1.09 keyboard-only flow completes movement, menu, and interaction")
+	_check(not main.menu_open and player.input_enabled and intents == ["code.desktop"] and backend.last_requested_desktop_id.is_empty(), "P1.09 keyboard-only flow completes movement, menu, and an offline-safe interaction")
 
 	if failures.is_empty():
 		print("Phase 1.01-1.09 validation passed.")

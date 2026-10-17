@@ -8,6 +8,7 @@ extends Panel
 ## mark retained session observations stale independently of Core connectivity.
 
 signal back_requested
+signal launch_requested(desktop_id: String)
 
 const Tokens = preload("res://ui/design_tokens.gd")
 const W = Tokens.Workshop
@@ -28,6 +29,8 @@ var _return: Button
 var _style: StyleBoxFlat
 var _focused := false
 var _selected := false
+var _selected_id := ""
+var _action: Dictionary = {}
 var _world_guidance := "APPROACH AN APPLICATION STATION"
 var _focused_guidance := "RETURN TO WORLD"
 
@@ -101,8 +104,13 @@ func focus_anchor() -> Control:
 	return _return
 
 func _on_return_pressed() -> void:
-	if _focused:
-		back_requested.emit()
+	confirm()
+
+func confirm() -> void:
+	if not _focused: return
+	if _action.is_empty(): back_requested.emit()
+	elif _action.get("enabled", false) and not _selected_id.is_empty():
+		launch_requested.emit(_selected_id)
 
 func _update_focus_appearance() -> void:
 	_style.border_color = W.FOCUS if _focused else W.ACCENT if _selected else W.OUTLINE
@@ -135,6 +143,11 @@ func _refit_labels() -> void:
 
 func update_view(selection: Dictionary, context: Dictionary) -> void:
 	var desktop_id := DisplayText.single_line(selection.get("selected_id", ""), 255)
+	_selected_id = desktop_id
+	var action_value = context.get("action", {})
+	_action = action_value.duplicate() if action_value is Dictionary else {}
+	_return.text = _action.get("label", "UNAVAILABLE") if not _action.is_empty() else "RETURN"
+	_return.disabled = not _action.is_empty() and not _action.get("enabled", false)
 	_selected = not desktop_id.is_empty()
 	var core_state := DisplayText.single_line(context.get("core_state", "offline"), 32)
 	var registry_known := bool(selection.get("registry_known", false))
@@ -209,6 +222,9 @@ func update_view(selection: Dictionary, context: Dictionary) -> void:
 
 func _update_feedback(desktop_id: String, core_state: String, value: Variant) -> void:
 	_feedback.text = "Actions: nearby object only"
+	if not _action.is_empty():
+		_feedback.text = "INSPECT TO " + _action.get("label", "LAUNCH")
+		if not _action.get("enabled", false): _feedback.text = _action.get("reason", "UNAVAILABLE")
 	var color := W.MUTED
 	if not desktop_id.is_empty() and value is Dictionary and value.get("desktop_id", "") == desktop_id:
 		match value.get("stage", ""):
@@ -222,7 +238,7 @@ func _update_feedback(desktop_id: String, core_state: String, value: Variant) ->
 				var message := DisplayText.single_line(value.get("message", "Launch request rejected"), 112)
 				_feedback.text = "LAUNCH FAILED // " + (message if not message.is_empty() else "Launch request rejected")
 				if bool(value.get("retryable", false)):
-					_feedback.text += " // RETRY AT STATION"
+					_feedback.text += " // EXPLICIT RETRY" if not _action.is_empty() else " // RETRY AT STATION"
 				color = W.FAILURE
 		if color != W.MUTED and core_state != "ready":
 			_feedback.text = "LAST: " + _feedback.text

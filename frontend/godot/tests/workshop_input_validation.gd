@@ -89,7 +89,9 @@ func run() -> void:
 	await tap(KEY_ENTER)
 	check(main.overlays.current == Overlay.Mode.INSPECTOR and backend.launches.size() == 1, "Old GUI confirm cannot dismiss or double-launch behind the inspector")
 	await tap(KEY_H)
-	check(main.overlays.current == Overlay.Mode.NONE and main.player.input_enabled, "Named remapped confirm returns to world exactly once")
+	check(main.overlays.current == Overlay.Mode.INSPECTOR and backend.launches.size() == 1, "Named remapped confirm cannot launch the removed application")
+	await tap(KEY_ESCAPE)
+	check(main.overlays.current == Overlay.Mode.NONE and main.player.input_enabled, "Back restores world after a disabled inspector action")
 	check(not backend.auto_connect and not backend.is_processing() and not main.load_preferences, "Test uses no live transport or preferences")
 	main.queue_free()
 	await process_frame
