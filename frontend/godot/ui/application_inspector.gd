@@ -28,6 +28,7 @@ var _style: StyleBoxFlat
 var _focused := false
 var _selected := false
 var _world_guidance := "APPROACH AN APPLICATION STATION"
+var _focused_guidance := "RETURN TO WORLD"
 
 func _init() -> void:
 	name = "ApplicationInspector"
@@ -105,7 +106,7 @@ func _on_return_pressed() -> void:
 func _update_focus_appearance() -> void:
 	_style.border_color = W.FOCUS if _focused else W.ACCENT if _selected else W.OUTLINE
 	_style.set_border_width_all(W.FOCUS_WIDTH if _focused else W.OUTLINE_WIDTH)
-	_guidance.text = "Actions: nearby object only // RETURN TO WORLD" if _focused else _world_guidance
+	_guidance.text = _focused_guidance if _focused else _world_guidance
 
 func _label(node_name: String, bounds: Rect2, font_size: int, color: Color) -> Label:
 	var label := Label.new()
@@ -151,6 +152,8 @@ func update_view(selection: Dictionary, context: Dictionary) -> void:
 			_availability.text = "CONNECTED // WAITING"
 		"loading_applications":
 			_availability.text = "LOADING APPLICATIONS"
+		"registry_stale":
+			_availability.text = "REGISTRY STALE"
 		"reconnecting":
 			_availability.text = "RECONNECTING"
 		"protocol_incompatible":
@@ -196,6 +199,8 @@ func update_view(selection: Dictionary, context: Dictionary) -> void:
 	var focus_hint := _display_text(context.get("focus_hint", ""), 48)
 	var nearby_prompt := _display_text(context.get("nearby_prompt", ""), 80)
 	var world_hint := "WORLD: " + nearby_prompt if not nearby_prompt.is_empty() else "APPROACH AN APPLICATION STATION"
+	if bool(context.get("world_locked", false)): world_hint = "WORLD INPUT LOCKED // PANEL ACTIVE"
+	_focused_guidance = _display_text(context.get("back_hint", "RETURN TO WORLD"), 96)
 	_world_guidance = (((focus_hint + " // ") if not focus_hint.is_empty() else "") + world_hint).left(128)
 	_update_focus_appearance()
 	_update_feedback(desktop_id, core_state, context.get("feedback", {}))

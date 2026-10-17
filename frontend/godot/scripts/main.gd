@@ -20,6 +20,10 @@ const Inspector = preload("res://ui/application_inspector.gd")
 var workshop: Node
 var inspector: Control
 var selection := Selection.new()
+# Display-only summaries of accepted BackendClient events, never request state
+# or a second transport/reconnect engine. Only the latest launch event is held.
+var _inspection_stage := ""
+var _inspection_feedback: Dictionary = {}
 var settings: RefCounted
 var onboarding: RefCounted
 var preferences_error: Error = OK
@@ -267,10 +271,12 @@ func reset_preferences() -> void:
 	pause_panel.set_feedback("RESET COMPLETE // HINTS RESTART ON RESUME")
 
 func _on_core_state_changed(state: int) -> void:
+	_inspection_stage = ""
 	var online := state == BackendClient.ConnectionState.READY
 	for panel in [workspace_map, notification_feed, media_console, observatory]:
 		panel.set_core_online(online)
 	pause_panel.refresh()
+	_refresh_inspector()
 
 func _on_hub_object_activated(kind: String) -> void:
 	match kind:
@@ -332,6 +338,7 @@ func _refresh_inspector() -> void:
 	if inspector == null or backend == null: return
 	var view := selection.view()
 	var focused: bool = overlays != null and overlays.current == Overlay.Mode.INSPECTOR
+	var modal: bool = overlays != null and overlays.current not in [Overlay.Mode.NONE, Overlay.Mode.INSPECTOR]
 	for station in _stations:
 		station.set_selection(station.desktop_id == view.selected_id, focused)
 	var core_state: String = {
@@ -342,12 +349,35 @@ func _refresh_inspector() -> void:
 		BackendClient.ConnectionState.RECONNECTING: "reconnecting",
 		BackendClient.ConnectionState.INCOMPATIBLE: "protocol_incompatible",
 	}.get(backend.state, "offline")
+	var observed := _selected_running_state(view.selected_id)
 	inspector.update_view(view, {
-		"core_state": core_state,
+		"core_state": _inspection_stage if not _inspection_stage.is_empty() else core_state,
 		"registry_empty": _registry_received and _applications_by_id.is_empty(),
 		"nearby_prompt": hud.prompt.text,
-		"focus_hint": "[%s] INSPECT" % Actions.binding_label("focus_inspector", 1),
+		"focus_hint": "[%s] BACK" % Actions.binding_label("back", 1) if modal else "[%s] INSPECT" % Actions.binding_label("focus_inspector", 1),
+		"back_hint": "[%s] BACK / [%s] RETURN TO WORLD" % [Actions.binding_label("back", 1), Actions.binding_label("confirm", 1)],
+		"world_locked": modal,
+		"feedback": _inspection_feedback,
+		"running_state": observed.state,
+		"running_location": observed.location,
+		"running_windows": observed.windows,
+		"running_stale": not backend.session_snapshot.is_empty() and (backend.state != BackendClient.ConnectionState.READY or backend.session_availability != "available"),
 	})
+
+func _selected_running_state(desktop_id: String) -> Dictionary:
+	var bound: Dictionary = _applications_by_id.get(desktop_id, {})
+	var applications: Array = []
+	for station in _stations:
+		if not station.application.is_empty(): applications.append(station.application)
+	if not bound.is_empty() and not applications.any(func(app): return app.get("id") == desktop_id):
+		applications.append(bound)
+	# BackendClient retains its last accepted snapshot on disconnect. Derive an
+	# observation from that cache, but mark it stale separately until subscribed
+	# session data is available again; never interpret acceptance as a window.
+	var snapshot: Dictionary = backend.session_snapshot
+	var running := SessionBinding.running_applications(applications, snapshot.get("windows", []))
+	return SessionBinding.station_running_state_from_matches(desktop_id, snapshot,
+		"available" if not snapshot.is_empty() else "unknown", bound, running)
 
 func _on_joy_connection_changed(device: int, connected: bool) -> void:
 	if connected: return
@@ -401,11 +431,13 @@ func _on_media_console_closed() -> void:
 func _on_session_snapshot_changed(snapshot: Dictionary) -> void:
 	workspace_map.update_session(snapshot)
 	_refresh_station_running_states(snapshot)
+	_refresh_inspector()
 
 func _on_session_availability_changed(availability: String) -> void:
 	workspace_map.set_availability(availability)
 	if availability != "available":
 		_refresh_station_running_states({})
+	_refresh_inspector()
 
 func _refresh_station_running_states(snapshot: Dictionary) -> void:
 	var availability: String = backend.session_availability if not snapshot.is_empty() else "unavailable"
@@ -443,6 +475,10 @@ func _on_backend_ux_status(
 	tone: String,
 	transient_seconds: float
 ) -> void:
+	if stage in ["connecting", "connected", "loading_applications", "ready", "reconnecting", "protocol_incompatible"]:
+		_inspection_stage = stage
+	elif stage == "core_offline": _inspection_stage = "offline"
+	elif stage == "registry_failed": _inspection_stage = "registry_stale"
 	match stage:
 		"core_offline":
 			hud.set_connection_status("CORE OFFLINE", "failure")
@@ -461,6 +497,7 @@ func _on_backend_ux_status(
 	else:
 		hud.show_transient(hud_message, tone, transient_seconds)
 	pause_panel.refresh()
+	_refresh_inspector()
 
 func _on_launch_status_changed(
 	desktop_id: String,
@@ -468,6 +505,8 @@ func _on_launch_status_changed(
 	message: String,
 	retryable: bool
 ) -> void:
+	_inspection_feedback = {"desktop_id": desktop_id, "stage": stage, "message": message.left(160), "retryable": retryable}
+	_refresh_inspector()
 	if stage in ["launch_successful", "launch_failed"]:
 		ui_audio.play_cue("confirm" if stage == "launch_successful" else "reject")
 	for station in _stations:
@@ -494,6 +533,7 @@ func _on_interaction_requested(target: Node) -> void:
 		target.interact()
 
 func _on_applications_changed(applications: Array) -> void:
+	if backend.state == BackendClient.ConnectionState.READY: _inspection_stage = "ready"
 	selection.update_registry(applications)
 	_applications_by_id.clear()
 	_registry_received = true
