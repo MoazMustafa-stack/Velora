@@ -50,6 +50,7 @@ run_godot workshop-art --script res://tests/workshop_art_validation.gd
 run_godot workshop-view --script res://tests/workshop_view_validation.gd
 run_godot workshop-world --script res://tests/workshop_world_validation.gd
 run_godot application-selection --script res://tests/application_selection_validation.gd
+run_godot application-actions --script res://tests/application_actions_validation.gd
 run_godot application-inspector --script res://tests/application_inspector_validation.gd
 run_godot workshop-context --script res://tests/workshop_context_validation.gd
 run_godot workshop-input --script res://tests/workshop_input_validation.gd

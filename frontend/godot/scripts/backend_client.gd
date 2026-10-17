@@ -359,6 +359,9 @@ func send_media_control(player_handle: String, verb: String) -> bool:
 		return false
 	return true
 
+func pending_launch_id() -> String:
+	return _launch_desktop_id
+
 func launch_app(desktop_id: String) -> bool:
 	last_requested_desktop_id = desktop_id
 	if state != ConnectionState.READY:
