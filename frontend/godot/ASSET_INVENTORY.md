@@ -1,5 +1,65 @@
 # Fixed-canvas visual inventory
 
+## R6.02 workshop family — native review pending (2026-10-17)
+
+The owner-approved density is 640 × 360 with a lower 80-pixel inspector and
+24-pixel header. `design_tokens.gd.Workshop` defines proposed warm ink, lavender
+surfaces, brass/wood details, readable body/title typography (12/14 px), spacing,
+outlines and semantic status colors. The root token constants remain the legacy
+runtime contract until the reviewed world/inspector migration; there is no
+production theme or resolution selector.
+
+`scripts/workshop_art.gd`, accessed through `pixel_art.gd`, generates the proposed
+family deterministically. World textures remain 32 × 32 **world pixels**; native
+UI icons are 16 × 16 nearest-sampled from the same original geometry. The world
+will still display at 2× without scaling physics, speed or interaction distances.
+
+| Identity | Object / category fallback |
+| --- | --- |
+| Editor / development | Booked workbench with bracket monitor |
+| Browser / network | Globe on a stand, distinct from the observatory telescope |
+| Terminal / system | Low terminal rack with prompt glyph |
+| Workspaces | Folded map |
+| Media | Record deck |
+| Notifications | Flagged postbox |
+| Observatory | Angled telescope |
+| Unknown application | Handled toolbox, never an inferred executable/icon path |
+
+Ready uses a check; waiting an hourglass; failure an exclamation; offline a
+cross; disabled a dash. Selected objects use corner brackets; explicit keyboard
+focus uses a continuous doubled outline. Labels accompany status colors; tests
+require distinct silhouettes/icons and monochrome state markers. Text/status
+colors have at least 4.5:1 contrast against the proposed inspector panel. These
+static assets introduce no animation, flashing or reduced-motion exceptions.
+
+There are at most 8 × 7 cached object textures and 8 icons; unknown kind/state
+strings normalize **before** lookup. No random seeds, runtime downloads,
+external SVG/icon parsing, host files or live snapshots are involved. All pixel
+geometry is original project source covered by the root BSD-3-Clause license.
+Typography uses Godot's bundled default font; its upstream font and engine
+licenses remain Godot's, not relicensed as project artwork. No font is copied
+or downloaded into this repository.
+
+The mechanical status-marker/accent consolidation at `609080e` preserved all
+22 legacy generated image hashes (nine station states, four capabilities, tile
+atlas, eight player frames). Intentional workshop art is a separate additive
+API: the normal application still renders the existing room. Owner native
+visual approval is required before R6.03 adopts this family.
+
+For the synthetic native contact sheet (no Core, settings or private data):
+
+```bash
+style_dir="$(mktemp -d /tmp/velora-workshop-style.XXXXXX)"
+VELORA_WORKSHOP_STYLE_DIR="$style_dir" godot --path frontend/godot \
+  --script res://tests/workshop_style_capture.gd
+```
+
+The fixture exports true 640 × 360, grayscale and integer 720p/1080p images.
+It is also registered in the graphical gate. Static images do not replace
+world collision/input review, performance checks or the owner's art decision.
+
+## Historical production inventory
+
 Baseline: merged Phase 5 `5bdf1dc`, 320 × 180, nearest integer scaling,
 Godot Compatibility renderer. No downloaded art or fonts are introduced.
 

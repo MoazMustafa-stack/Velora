@@ -3,6 +3,7 @@ extends SceneTree
 const Tokens = preload("res://ui/design_tokens.gd")
 const W = Tokens.Workshop
 const Art = preload("res://scripts/pixel_art.gd")
+const Sheet = preload("res://tests/workshop_style_sheet.gd")
 var failures: Array[String] = []
 
 func check(value: bool, message: String) -> void:
@@ -49,6 +50,17 @@ func run() -> void:
 				monochrome.set_pixel(x, y, Color(light, light, light, pixel.a))
 		check(monochrome.get_data() not in states, "State has a distinct non-color marker: " + state)
 		states.append(monochrome.get_data())
+	var sheet := Sheet.new()
+	root.add_child(sheet)
+	await process_frame
+	await process_frame
+	for child in sheet.get_children():
+		if child is Control:
+			check(Rect2(Vector2.ZERO, Vector2(W.CANVAS)).encloses(child.get_rect()), "Native typography and icons stay within the sheet")
+		if child is Label:
+			check(child.clip_text and child.text_overrun_behavior == TextServer.OVERRUN_TRIM_ELLIPSIS, "Labels are bounded, with honest overflow indication")
+	sheet.queue_free()
+	await process_frame
 	if failures.is_empty(): print("R6.02 workshop visual contract passed")
 	quit(0 if failures.is_empty() else 1)
 
