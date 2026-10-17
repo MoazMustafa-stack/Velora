@@ -14,9 +14,9 @@ controller checks remain regression protection, not a supported-product claim.
 ## Automated gate
 
 R6.02 visual-sheet approval is recorded for 2026-10-17. R6.03–R6.05 production
-work is implemented; combined gate and owner room/keyboard review are pending
-at this checkpoint. See [WORKSHOP_REVIEW.md](WORKSHOP_REVIEW.md) for per-card
-evidence. F focuses inspection by default (remappable); E/Enter still acts only
+work is implemented; the full local graphical gate passed on 307a2bb. Owner
+room/keyboard review remains pending. See [WORKSHOP_REVIEW.md](WORKSHOP_REVIEW.md)
+for per-card evidence. F focuses inspection by default (remappable); E/Enter still acts only
 on a physically nearby object. Inspector launch actions are not implemented.
 
 Run from the repository root in a graphical session:
@@ -56,9 +56,10 @@ private bus or disable integrations, not the production bus.
 
 Both rendered benchmarks require at least 55 FPS average and at most 25 ms p95.
 The crowded fixture measures movement, overlay transitions, nullable telemetry,
-32 feed rows, 16 players, 20 workspaces and a 600-entry registry capped to 512
-chooser entries, with repeated snapshot/registry refreshes while paused. Its
-data deliberately stresses UI bounds; it does not measure live IPC throughput
+32 feed rows, 16 players, 20 workspaces and a 603-entry registry (three mapped
+plus 600 fake) capped to 512 chooser entries, with repeated snapshot/registry
+refreshes while paused. Its data deliberately stresses UI bounds;
+it does not measure live IPC throughput
 or replace protocol wire-size validation. Report the adapter and workload with
 any performance claim, including maximum-frame outliers.
 

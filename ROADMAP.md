@@ -25,8 +25,9 @@ module responsibilities, dependencies, commit/review slices and acceptance.
 Existing D6 card numbers are retained as implementation history. R6.01's isolated
 native proof and full local gate pass; the owner approved 640×360 with the lower
 inspector on 2026-10-16. R6.02's native visual sheet was approved on 2026-10-17.
-R6.03–R6.05 are implemented with focused automated checks, pending the combined
-gate and final owner room/input review. R6.06–R6.10 remain Todo. See the
+R6.03–R6.05 are implemented with passing focused checks and a full graphical
+gate on 307a2bb, pending final owner room/input review. R6.06–R6.10 remain Todo.
+See the
 [implementation review](frontend/godot/WORKSHOP_REVIEW.md)
 for measurements and limitations; accepting a direction does not complete cards.
 
