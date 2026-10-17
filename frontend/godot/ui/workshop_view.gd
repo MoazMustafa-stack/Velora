@@ -13,7 +13,9 @@ func configure(world: Node2D, hud: CanvasLayer, panels: Array) -> void:
 	world_viewport.size = W.WORLD_VIEW
 	world_viewport.world_2d = World2D.new()
 	world_viewport.disable_3d = true
-	world_viewport.gui_disable_input = true
+	# Main explicitly forwards world-owned events. Disabling viewport input
+	# would also prevent Player._unhandled_input from receiving those keys.
+	world_viewport.gui_disable_input = false
 	world_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(world_viewport)
 	world.reparent(world_viewport, false)

@@ -9,6 +9,8 @@ const UiAudio = preload("res://scripts/ui_audio.gd")
 const Bindings = preload("res://scripts/key_bindings.gd")
 const Mappings = preload("res://scripts/station_mappings.gd")
 const WorkshopView = preload("res://ui/workshop_view.gd")
+const Selection = preload("res://scripts/application_selection.gd")
+const Inspector = preload("res://ui/application_inspector.gd")
 
 # Tests and performance fixtures disable all preference IO, or inject a temp path.
 @export var load_preferences := true
@@ -16,6 +18,8 @@ const WorkshopView = preload("res://ui/workshop_view.gd")
 # Fixture injection only: historical density proofs bypass production composition.
 @export var compose_workshop := true
 var workshop: Node
+var inspector: Control
+var selection := Selection.new()
 var settings: RefCounted
 var onboarding: RefCounted
 var preferences_error: Error = OK
@@ -51,6 +55,12 @@ func _ready() -> void:
 		workshop = WorkshopView.new()
 		add_child(workshop)
 		workshop.configure(world, hud, [pause_panel, workspace_map, notification_feed, media_console, observatory])
+		var inspector_layer := CanvasLayer.new()
+		inspector_layer.layer = 7
+		add_child(inspector_layer)
+		inspector = Inspector.new()
+		inspector_layer.add_child(inspector)
+		inspector.back_requested.connect(func(): overlays.close(Overlay.Mode.INSPECTOR))
 	Actions.ensure_registered()
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	settings = Store.new(preferences_path)
@@ -83,8 +93,11 @@ func _ready() -> void:
 		Overlay.Mode.NOTIFICATIONS: notification_feed,
 		Overlay.Mode.MEDIA: media_console,
 		Overlay.Mode.OBSERVATORY: observatory,
-	})
+	}, inspector)
+	overlays.changed.connect(_on_context_changed)
 	player.interaction_changed.connect(hud.set_interaction_prompt)
+	player.target_changed.connect(_on_nearby_target_changed)
+	player.interaction_changed.connect(func(_prompt): _refresh_inspector())
 	player.interaction_requested.connect(_on_interaction_requested)
 	player.menu_requested.connect(_toggle_menu)
 	for object in get_tree().get_nodes_in_group("hub_objects"):
@@ -136,6 +149,7 @@ func _ready() -> void:
 	_on_core_state_changed(backend.state)
 	if preferences_error != OK:
 		hud.show_transient("SETTINGS INVALID // USING DEFAULTS", "waiting", 4.0)
+	_refresh_inspector()
 
 func _process(_delta: float) -> void:
 	if onboarding.active and overlays.current == Overlay.Mode.NONE and player.position != _last_player_position:
@@ -144,6 +158,7 @@ func _process(_delta: float) -> void:
 
 func _refresh_help() -> void:
 	hud.set_help(onboarding.hint())
+	_refresh_inspector()
 
 func _complete_onboarding() -> void:
 	settings.set_onboarding_completed(true)
@@ -205,6 +220,7 @@ func _apply_station_mappings() -> void:
 			station._refresh_sprite()
 	if player.input_enabled: player.refresh_interaction()
 	if changed: _refresh_station_running_states(backend.session_snapshot)
+	_on_nearby_target_changed(player.active_interactable)
 
 func _on_station_mapping_requested(slot: String, id: String) -> void:
 	var problem := "INVALID SLOT" if not Mappings.DEFAULTS.has(slot) else ""
@@ -279,6 +295,19 @@ func _input(event: InputEvent) -> void:
 	if Actions.pressed(event, "back") or Actions.pressed(event, "menu"):
 		get_viewport().set_input_as_handled()
 		_toggle_menu()
+		return
+	if inspector != null and Actions.pressed(event, "focus_inspector") and overlays.current in [Overlay.Mode.NONE, Overlay.Mode.INSPECTOR]:
+		get_viewport().set_input_as_handled()
+		overlays.toggle(Overlay.Mode.INSPECTOR)
+		return
+	if overlays.current == Overlay.Mode.INSPECTOR:
+		# Own this context before native GUI ui_accept can bypass remapped
+		# confirm, or the same Enter can fall through into world activation.
+		get_viewport().set_input_as_handled()
+		if Actions.pressed(event, "confirm"): overlays.close(Overlay.Mode.INSPECTOR)
+		elif Actions.pressed(event, "workspace_map"): _toggle_workspace_map()
+		elif Actions.pressed(event, "notification_feed"): _toggle_notification_feed()
+		elif Actions.pressed(event, "media_console"): _toggle_media_console()
 
 func _refresh_input_labels() -> void:
 	_refresh_help()
@@ -286,6 +315,39 @@ func _refresh_input_labels() -> void:
 	pause_panel.refresh()
 	for panel in [workspace_map, notification_feed, media_console]: panel._refresh_hint()
 	observatory.refresh()
+	_refresh_inspector()
+
+func _on_nearby_target_changed(target: Node) -> void:
+	if is_instance_valid(target) and target.is_in_group("application_stations"):
+		selection.observe_nearby(target.desktop_id, target.application)
+	else:
+		selection.observe_nearby("")
+	_refresh_inspector()
+
+func _on_context_changed(_mode: int) -> void:
+	if workshop != null: workshop.call_deferred("fit_panels")
+	_refresh_inspector()
+
+func _refresh_inspector() -> void:
+	if inspector == null or backend == null: return
+	var view := selection.view()
+	var focused: bool = overlays != null and overlays.current == Overlay.Mode.INSPECTOR
+	for station in _stations:
+		station.set_selection(station.desktop_id == view.selected_id, focused)
+	var core_state: String = {
+		BackendClient.ConnectionState.DISCONNECTED: "offline",
+		BackendClient.ConnectionState.CONNECTING: "connecting",
+		BackendClient.ConnectionState.HANDSHAKING: "connected",
+		BackendClient.ConnectionState.READY: "ready",
+		BackendClient.ConnectionState.RECONNECTING: "reconnecting",
+		BackendClient.ConnectionState.INCOMPATIBLE: "protocol_incompatible",
+	}.get(backend.state, "offline")
+	inspector.update_view(view, {
+		"core_state": core_state,
+		"registry_empty": _registry_received and _applications_by_id.is_empty(),
+		"nearby_prompt": hud.prompt.text,
+		"focus_hint": "[%s] INSPECT" % Actions.binding_label("focus_inspector", 1),
+	})
 
 func _on_joy_connection_changed(device: int, connected: bool) -> void:
 	if connected: return
@@ -414,6 +476,9 @@ func _on_launch_status_changed(
 			return
 
 func _on_interaction_requested(target: Node) -> void:
+	# Inspection can outlive proximity, but it can never grant world authority.
+	if not player.input_enabled or overlays.current != Overlay.Mode.NONE or not is_instance_valid(target) or target != player.active_interactable:
+		return
 	if target.has_method("interact"):
 		ui_audio.play_cue("interact")
 		onboarding.observe("interact")
@@ -429,6 +494,7 @@ func _on_interaction_requested(target: Node) -> void:
 		target.interact()
 
 func _on_applications_changed(applications: Array) -> void:
+	selection.update_registry(applications)
 	_applications_by_id.clear()
 	_registry_received = true
 	for application in applications:

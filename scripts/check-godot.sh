@@ -52,6 +52,7 @@ run_godot workshop-world --script res://tests/workshop_world_validation.gd
 run_godot application-selection --script res://tests/application_selection_validation.gd
 run_godot application-inspector --script res://tests/application_inspector_validation.gd
 run_godot workshop-context --script res://tests/workshop_context_validation.gd
+run_godot workshop-input --script res://tests/workshop_input_validation.gd
 run_godot panel-primitives --script res://tests/panel_primitives_validation.gd
 run_godot settings --script res://tests/settings_validation.gd
 run_godot overlays --script res://tests/overlay_validation.gd

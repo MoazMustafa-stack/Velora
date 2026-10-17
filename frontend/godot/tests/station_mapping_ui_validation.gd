@@ -25,6 +25,8 @@ func run() -> void:
 	main.backend.set_process(false)
 	var station = main.world.get_node("Objects/Workstation")
 	check(station.desktop_id == "missing.desktop" and station.registry_checked and not station.is_application_available(), "Missing saved mapping is unavailable before the first catalog")
+	await approach(main)
+	check(main.player.active_interactable == station, "Mapping fixture interacts only with a physically nearby station")
 	main._on_interaction_requested(station)
 	check(main.backend.last_requested_desktop_id.is_empty(), "Unknown saved mapping never creates a launch request")
 	var fixture := [{"id": "safe.desktop", "name": "Safe\nApp", "startup_wm_class": "SafeApp", "exec": "/usr/bin/safeapp"}, {"id": "code.desktop", "name": "Editor"}]
@@ -64,6 +66,7 @@ func run() -> void:
 	main.backend.add_child(bridge)
 	main.backend._bridge = bridge
 	main.overlays.back()
+	await approach(main)
 	main._on_interaction_requested(station)
 	check(bridge.lines.size() == 1, "Known mapping sends exactly one fake launch request")
 	var request: Dictionary = JSON.parse_string(bridge.lines[0])
@@ -95,3 +98,11 @@ func run() -> void:
 	await process_frame
 	if not failed: print("D6.12 registry station chooser, safe launch path and persistence passed")
 	quit(1 if failed else 0)
+
+func approach(main: Node) -> void:
+	main.player.position = Vector2(160, 82)
+	main.player.facing = Vector2.UP
+	main.player._update_detector_position()
+	await physics_frame
+	await physics_frame
+	main.player.refresh_interaction()

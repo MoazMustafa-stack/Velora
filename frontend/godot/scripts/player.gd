@@ -5,6 +5,7 @@ const PixelArt = preload("res://scripts/pixel_art.gd")
 
 signal interaction_changed(prompt: String)
 signal interaction_requested(target: Node)
+signal target_changed(target: Node)
 signal menu_requested
 
 @export var walk_speed := 48.0
@@ -55,7 +56,9 @@ func set_input_enabled(enabled: bool) -> void:
 	input_enabled = enabled
 	if not enabled:
 		velocity = Vector2.ZERO
+		var had_target := active_interactable != null
 		active_interactable = null
+		if had_target: target_changed.emit(null)
 		_last_prompt = ""
 		interaction_changed.emit("")
 
@@ -126,7 +129,9 @@ func _update_interaction() -> void:
 		if distance < closest_distance or (is_equal_approx(distance, closest_distance) and closest != null and String(candidate.get_path()) < String(closest.get_path())):
 			closest = candidate
 			closest_distance = distance
-	active_interactable = closest
+	if active_interactable != closest:
+		active_interactable = closest
+		target_changed.emit(closest)
 	var prompt: String = active_interactable.interaction_prompt() if active_interactable else ""
 	if prompt != _last_prompt:
 		_last_prompt = prompt

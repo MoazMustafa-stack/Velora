@@ -66,6 +66,8 @@ func _run() -> void:
 		"P2.08 unavailable stations expose a clear prompt"
 	)
 
+	await _approach(main, Vector2(160, 82))
+	_check(main.player.active_interactable == workstation, "Station launch fixture has a real nearby target")
 	main._on_interaction_requested(workstation)
 	await process_frame
 	_check(
@@ -82,6 +84,8 @@ func _run() -> void:
 		"P2.09 reports the actual offline launch failure"
 	)
 
+	await _approach(main, Vector2(224, 82))
+	_check(main.player.active_interactable == terminal_station, "Missing application fixture remains physically reachable")
 	main._on_interaction_requested(terminal_station)
 	await process_frame
 	_check(
@@ -101,3 +105,11 @@ func _run() -> void:
 	else:
 		push_error("P2.08 station validation failed: %s" % [failures])
 		quit(1)
+
+func _approach(main: Node, destination: Vector2) -> void:
+	main.player.position = destination
+	main.player.facing = Vector2.UP
+	main.player._update_detector_position()
+	await physics_frame
+	await physics_frame
+	main.player.refresh_interaction()
