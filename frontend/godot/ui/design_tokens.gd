@@ -17,6 +17,11 @@ const SELECTED := Color("16324f")
 const PANEL := Color("071226")
 const SHADE := Color(0.027451, 0.039216, 0.07451, 0.901961)
 const TONES := {"ready": READY, "waiting": WAITING, "failure": FAILURE}
+const STATUS_MARKERS := {
+	"ready": ["....#", "...#.", "#.#..", ".#...", "....."],
+	"attention": ["..#..", "..#..", "..#..", ".....", "..#.."],
+	"offline": ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
+}
 const PANEL_POSITION := Vector2(40, 24)
 const PANEL_WIDTH := 240
 const MAP_POSITION := Vector2(40, 30)

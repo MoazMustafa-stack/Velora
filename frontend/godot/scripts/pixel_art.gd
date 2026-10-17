@@ -15,11 +15,7 @@ const AMBER := Tokens.WORLD_AMBER
 const RED := Tokens.FAILURE
 const SOFT_WHITE := Tokens.WORLD_TEXT
 const SHADOW := Tokens.WORLD_SHADOW
-const STATE_MARKERS := {
-	"ready": ["....#", "...#.", "#.#..", ".#...", "....."],
-	"attention": ["..#..", "..#..", "..#..", ".....", "..#.."],
-	"offline": ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
-}
+const STATE_MARKERS := Tokens.STATUS_MARKERS
 static var _station_cache: Dictionary = {}
 static var _object_cache: Dictionary = {}
 

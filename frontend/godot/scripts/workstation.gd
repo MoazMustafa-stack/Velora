@@ -2,6 +2,7 @@ extends StaticBody2D
 
 const PixelArt = preload("res://scripts/pixel_art.gd")
 const Actions = preload("res://scripts/input_actions.gd")
+const Tokens = preload("res://ui/design_tokens.gd")
 
 signal status_changed(message: String, tone: String)
 
@@ -9,7 +10,7 @@ signal status_changed(message: String, tone: String)
 @export var display_name := "VS CODE"
 @export_enum("editor", "browser", "terminal") var station_slot := "editor"
 @export_enum("code", "browser", "terminal") var station_kind := "code"
-@export var accent := Color("41d6c3")
+@export var accent := Tokens.WORLD_ACCENT
 
 @onready var sprite: Sprite2D = $Sprite2D
 
