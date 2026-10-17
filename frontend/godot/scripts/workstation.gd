@@ -2,7 +2,6 @@ extends StaticBody2D
 
 const PixelArt = preload("res://scripts/pixel_art.gd")
 const Actions = preload("res://scripts/input_actions.gd")
-const Tokens = preload("res://ui/design_tokens.gd")
 
 signal status_changed(message: String, tone: String)
 
@@ -10,7 +9,6 @@ signal status_changed(message: String, tone: String)
 @export var display_name := "VS CODE"
 @export_enum("editor", "browser", "terminal") var station_slot := "editor"
 @export_enum("code", "browser", "terminal") var station_kind := "code"
-@export var accent := Tokens.WORLD_ACCENT
 
 @onready var sprite: Sprite2D = $Sprite2D
 
@@ -23,9 +21,19 @@ var running_state := "unknown"
 var running_location := ""
 var running_window_count := 0
 var _default_id := ""
+# Presentation only: launch eligibility still comes from the bound registry.
+var _launch_badge := ""
+var _selected := false
+var _inspector_focused := false
 
 func _ready() -> void:
 	_default_id = desktop_id
+	var footprint := Sprite2D.new()
+	footprint.name = "Footprint"
+	footprint.position = $CollisionShape2D.position
+	footprint.z_index = -1
+	footprint.texture = PixelArt.workshop_footprint_texture()
+	add_child(footprint)
 	_refresh_sprite()
 
 func interaction_prompt() -> String:
@@ -67,6 +75,7 @@ func interact() -> void:
 func bind_application(value: Dictionary) -> void:
 	registry_checked = true
 	retry_available = false
+	_launch_badge = ""
 	if String(value.get("id", "")) != desktop_id:
 		application.clear()
 		status = "offline"
@@ -78,6 +87,11 @@ func bind_application(value: Dictionary) -> void:
 func is_application_available() -> bool:
 	return not application.is_empty()
 
+func set_selection(selected: bool, focused := false) -> void:
+	_selected = selected
+	_inspector_focused = selected and focused
+	_refresh_sprite()
+
 func application_label() -> String:
 	var label := (display_name if desktop_id == _default_id else desktop_id) if application.is_empty() else String(application.get("name", display_name))
 	return label.replace("\n", " ").replace("\r", " ").replace("\t", " ").left(128)
@@ -86,14 +100,20 @@ func apply_launch_feedback(stage: String, _message: String, retryable: bool) -> 
 	match stage:
 		"launching_application":
 			status = "attention"
+			_launch_badge = "waiting"
 			retry_available = false
 		"launch_successful":
 			status = "ready"
+			_launch_badge = ""
 			retry_available = false
 		"launch_failed":
 			status = "ready" if not application.is_empty() else "offline"
+			_launch_badge = "failure"
 			retry_available = retryable and not application.is_empty()
 	_refresh_sprite()
 
 func _refresh_sprite() -> void:
-	sprite.texture = PixelArt.workstation_texture(status, accent, station_kind)
+	var marker := "waiting" if status == "attention" else status
+	if not _launch_badge.is_empty() and not application.is_empty():
+		marker = _launch_badge
+	sprite.texture = PixelArt.workshop_object_texture(station_kind, marker, _selected, _inspector_focused)
