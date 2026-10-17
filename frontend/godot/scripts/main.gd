@@ -8,10 +8,14 @@ const Onboarding = preload("res://ui/onboarding.gd")
 const UiAudio = preload("res://scripts/ui_audio.gd")
 const Bindings = preload("res://scripts/key_bindings.gd")
 const Mappings = preload("res://scripts/station_mappings.gd")
+const WorkshopView = preload("res://ui/workshop_view.gd")
 
 # Tests and performance fixtures disable all preference IO, or inject a temp path.
 @export var load_preferences := true
 @export var preferences_path := Store.DEFAULT_PATH
+# Fixture injection only: historical density proofs bypass production composition.
+@export var compose_workshop := true
+var workshop: Node
 var settings: RefCounted
 var onboarding: RefCounted
 var preferences_error: Error = OK
@@ -19,6 +23,7 @@ var _last_player_position := Vector2.ZERO
 var ui_audio: Node
 
 @onready var player: CharacterBody2D = $World/Player
+@onready var world: Node2D = $World
 @onready var backend: Node = $BackendClient
 @onready var hud: CanvasLayer = $HUD
 @onready var workspace_map: CanvasLayer = $WorkspaceMap
@@ -42,6 +47,10 @@ var _applications_by_id: Dictionary = {}
 var _registry_received := false
 
 func _ready() -> void:
+	if compose_workshop:
+		workshop = WorkshopView.new()
+		add_child(workshop)
+		workshop.configure(world, hud, [pause_panel, workspace_map, notification_feed, media_console, observatory])
 	Actions.ensure_registered()
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	settings = Store.new(preferences_path)
@@ -299,6 +308,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif Actions.pressed(event, "media_console"):
 		get_viewport().set_input_as_handled()
 		_toggle_media_console()
+	elif workshop != null and workshop.forward_world_input(event):
+		get_viewport().set_input_as_handled()
 
 func _toggle_workspace_map() -> void:
 	onboarding.observe("map")

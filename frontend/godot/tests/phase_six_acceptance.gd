@@ -84,7 +84,7 @@ func run() -> void:
 	main.backend.applications_changed.emit(registry)
 	check(text_of(main.pause_panel).contains("ID // fixture-0511.desktop"), "Live registry reorder preserves the selected desktop ID")
 	await tap(KEY_ENTER)
-	check(main.get_node("World/Objects/Workstation").desktop_id == "fixture-0511.desktop", "Keyboard confirms the same selected ID after live reorder")
+	check(main.world.get_node("Objects/Workstation").desktop_id == "fixture-0511.desktop", "Keyboard confirms the same selected ID after live reorder")
 	check(bridge.last("launch_application").is_empty(), "Browsing and choosing a mapping never launches an application")
 	main.queue_free()
 	await process_frame

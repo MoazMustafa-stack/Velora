@@ -31,7 +31,7 @@ func _run() -> void:
 	await _process_frames(2)
 
 	var hud = main.get_node("HUD")
-	var workstation = main.get_node("World/Objects/Workstation")
+	var workstation = main.world.get_node("Objects/Workstation")
 	_check(hud.connection.text == "CORE OFFLINE", "P2.09 Core offline is visible")
 
 	backend._set_state(BackendClient.ConnectionState.CONNECTING, "validation")

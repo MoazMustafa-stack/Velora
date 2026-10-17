@@ -23,8 +23,8 @@ func _hold(action: StringName, frames: int) -> void:
 	await _physics_frames(2)
 
 func _run() -> void:
-	_check(ProjectSettings.get_setting("display/window/size/viewport_width") == 320, "P1.01 uses a 320 px internal width")
-	_check(ProjectSettings.get_setting("display/window/size/viewport_height") == 180, "P1.01 uses a 180 px internal height")
+	_check(ProjectSettings.get_setting("display/window/size/viewport_width") == 640, "R6.03 supersedes P1.01 with the approved 640 px UI width")
+	_check(ProjectSettings.get_setting("display/window/size/viewport_height") == 360, "R6.03 uses the approved 360 px UI height, without scaling physics")
 	_check(ProjectSettings.get_setting("rendering/textures/canvas_textures/default_texture_filter") == 0, "P1.01 uses nearest-neighbour texture filtering")
 
 	var packed := load("res://scenes/main.tscn") as PackedScene
@@ -38,11 +38,11 @@ func _run() -> void:
 	root.add_child(main)
 	await _physics_frames(3)
 
-	var ground := main.get_node("World/Ground") as TileMapLayer
-	var walls := main.get_node("World/Walls") as TileMapLayer
-	var details := main.get_node("World/Details") as TileMapLayer
-	var player := main.get_node("World/Player") as CharacterBody2D
-	var workstation := main.get_node("World/Objects/Workstation") as StaticBody2D
+	var ground := main.world.get_node("Ground") as TileMapLayer
+	var walls := main.world.get_node("Walls") as TileMapLayer
+	var details := main.world.get_node("Details") as TileMapLayer
+	var player := main.player as CharacterBody2D
+	var workstation := main.world.get_node("Objects/Workstation") as StaticBody2D
 	var detector := player.get_node("InteractionDetector") as Area2D
 	var backend := main.get_node("BackendClient")
 	var hud := main.get_node("HUD")
@@ -115,7 +115,7 @@ func _run() -> void:
 		station_ids.append(station.desktop_id)
 	_check(stations.size() == 3, "P1.07 hub exposes three reusable application stations")
 	_check(station_ids.has("code.desktop") and station_ids.has("firefox.desktop") and station_ids.has("kitty.desktop"), "P1.07 stations carry semantic desktop IDs")
-	_check(main.get_node("World/Objects/BrowserStation").interaction_prompt() == "[E] USE  FIREFOX", "P1.07 station prompts are configured per application")
+	_check(main.world.get_node("Objects/BrowserStation").interaction_prompt() == "[E] USE  FIREFOX", "P1.07 station prompts are configured per application")
 
 	_check(backend.last_requested_desktop_id == "code.desktop", "P1.08 interaction reaches the typed backend boundary")
 	_check(not backend.connected, "P1.08 Phase 1 remains offline-safe")

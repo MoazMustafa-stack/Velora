@@ -30,8 +30,8 @@ func _run() -> void:
 	root.add_child(main)
 	await _process_frames(2)
 
-	var workstation := main.get_node("World/Objects/Workstation")
-	var terminal_station := main.get_node("World/Objects/TerminalStation")
+	var workstation := main.world.get_node("Objects/Workstation")
+	var terminal_station := main.world.get_node("Objects/TerminalStation")
 	var hud := main.get_node("HUD")
 	backend.applications_changed.emit([
 		{

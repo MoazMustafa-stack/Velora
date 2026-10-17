@@ -42,6 +42,7 @@ func _init(size := Vector2i(320, 180)) -> void:
 	canvas.add_child(world)
 	main = load("res://scenes/main.tscn").instantiate()
 	main.load_preferences = false
+	main.compose_workshop = false
 	main.get_node("BackendClient").auto_connect = false
 	world.add_child(main)
 	ui = Control.new()

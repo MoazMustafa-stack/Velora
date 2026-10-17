@@ -23,6 +23,10 @@ func run() -> void:
 		return
 	var main = load("res://scenes/main.tscn").instantiate()
 	main.load_preferences = false
+	# Preserve the historical 320-native panel/HUD comparison separately from
+	# the production workshop's native render and input acceptance fixtures.
+	main.compose_workshop = false
+	root.content_scale_size = Vector2i(320, 180)
 	main.get_node("BackendClient").auto_connect = false
 	root.add_child(main)
 	await process_frame

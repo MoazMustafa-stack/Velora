@@ -23,7 +23,7 @@ func run() -> void:
 	root.add_child(main)
 	await process_frame
 	main.backend.set_process(false)
-	var station = main.get_node("World/Objects/Workstation")
+	var station = main.world.get_node("Objects/Workstation")
 	check(station.desktop_id == "missing.desktop" and station.registry_checked and not station.is_application_available(), "Missing saved mapping is unavailable before the first catalog")
 	main._on_interaction_requested(station)
 	check(main.backend.last_requested_desktop_id.is_empty(), "Unknown saved mapping never creates a launch request")
@@ -89,7 +89,7 @@ func run() -> void:
 	await process_frame
 	main._toggle_menu()
 	main.pause_panel.show_page("stations")
-	check(main.get_node("World/Objects/Workstation").desktop_id == "code.desktop" and main.pause_panel._detail.text.contains("INVALID SAVED ID"), "Malformed persisted mapping falls back visibly, without command execution")
+	check(main.world.get_node("Objects/Workstation").desktop_id == "code.desktop" and main.pause_panel._detail.text.contains("INVALID SAVED ID"), "Malformed persisted mapping falls back visibly, without command execution")
 	main.reset_preferences()
 	main.queue_free()
 	await process_frame

@@ -22,6 +22,7 @@ var _transient_active := false
 var _telemetry: Label
 var _modal_active := false
 var _connection_tone := "failure"
+var _workshop_presentation := false
 @onready var help: Label = $Help
 
 func _ready() -> void:
@@ -59,6 +60,21 @@ func _process(delta: float) -> void:
 	if _transient_remaining <= 0.0:
 		_transient_active = false
 		_render_status()
+
+func configure_workshop() -> void:
+	_workshop_presentation = true
+	var w = Tokens.Workshop
+	for pair in [[$StatusPanel, Rect2(8, 0, 430, 24)], [$ConnectionPanel, Rect2(454, 0, 178, 24)]]:
+		var panel: PanelContainer = pair[0]
+		var style := StyleBoxFlat.new()
+		style.bg_color = w.PANEL
+		style.set_content_margin_all(0)
+		panel.add_theme_stylebox_override("panel", style)
+		var margin: MarginContainer = panel.get_child(0)
+		for edge in ["top", "bottom"]: margin.add_theme_constant_override("margin_" + edge, 0)
+		Layout.fit(panel, pair[1])
+	for label in [status, connection]: label.add_theme_font_size_override("font_size", w.FONT_BODY)
+	_refresh_visibility()
 
 func set_interaction_prompt(message: String) -> void:
 	prompt.text = message
@@ -141,6 +157,15 @@ func set_help(message: String) -> void:
 	help.text = message
 
 func _refresh_visibility() -> void:
+	if _workshop_presentation:
+		# The persistent inspector now owns contextual guidance. Retain the old
+		# prompt/help/telemetry values for state recovery and fixture comparison.
+		$StatusPanel.show()
+		$ConnectionPanel.show()
+		help.hide()
+		prompt_panel.hide()
+		_telemetry.hide()
+		return
 	var tone := _transient_tone if _transient_active else _world_tone
 	var shown := Layout.visibility(_modal_active or (menu_overlay != null and menu_overlay.visible),
 		tone == "failure" or _connection_tone == "failure", not prompt.text.is_empty())
@@ -162,4 +187,6 @@ func _render_status() -> void:
 		status.add_theme_color_override("font_color", _tone_color(_world_tone))
 
 func _tone_color(tone: String) -> Color:
+	if _workshop_presentation:
+		return {"ready": Tokens.Workshop.READY, "waiting": Tokens.Workshop.WAITING, "failure": Tokens.Workshop.FAILURE}.get(tone, Tokens.Workshop.TEXT)
 	return TONE_COLORS.get(tone, TONE_COLORS["ready"])
