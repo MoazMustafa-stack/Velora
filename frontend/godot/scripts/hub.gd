@@ -11,7 +11,7 @@ const OBJECT_LAYOUT := {"map": Vector2(64, 104), "media": Vector2(112, 104), "no
 @onready var details: TileMapLayer = $Details
 
 func _ready() -> void:
-	var tile_set: TileSet = PixelArt.create_tileset()
+	var tile_set: TileSet = PixelArt.create_workshop_tileset()
 	var source_id: int = tile_set.get_meta("velora_source_id")
 	ground.tile_set = tile_set
 	walls.tile_set = tile_set

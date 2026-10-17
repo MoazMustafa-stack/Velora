@@ -1,6 +1,7 @@
 extends StaticBody2D
 ## One physical, facing-aware interactable archetype; no backend authority.
 const Art = preload("res://scripts/pixel_art.gd")
+const W = preload("res://ui/design_tokens.gd").Workshop
 const Actions = preload("res://scripts/input_actions.gd")
 const Shell = preload("res://ui/panel_shell.gd")
 const NAMES := {"map": "WORKSPACE MAP", "media": "MEDIA CONSOLE", "notifications": "NOTIFICATION FEED", "observatory": "OBSERVATORY"}
@@ -16,7 +17,7 @@ func _ready() -> void:
 	var sprite := Sprite2D.new()
 	sprite.name = "Sprite2D"
 	sprite.position = Vector2(0, -5)
-	sprite.texture = Art.hub_object_texture(object_kind)
+	sprite.texture = Art.workshop_object_texture(object_kind)
 	add_child(sprite)
 	var shape := RectangleShape2D.new()
 	shape.size = Vector2(32, 18)
@@ -25,6 +26,12 @@ func _ready() -> void:
 	collision.position = Vector2(0, 5)
 	collision.shape = shape
 	add_child(collision)
+	var footprint := Sprite2D.new()
+	footprint.name = "Footprint"
+	footprint.position = collision.position
+	footprint.z_index = -1
+	footprint.texture = Art.workshop_footprint_texture()
+	add_child(footprint)
 	var area := Area2D.new()
 	area.name = "InteractionArea"
 	area.collision_layer = 4
@@ -35,7 +42,7 @@ func _ready() -> void:
 	target.shape = target_shape
 	area.add_child(target)
 	add_child(area)
-	var label := Shell.label(MARKERS.get(object_kind, "?"), 7, Art.SOFT_WHITE)
+	var label := Shell.label(MARKERS.get(object_kind, "?"), 7, W.TEXT)
 	label.position = Vector2(-20, 15)
 	label.size = Vector2(40, 12)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
