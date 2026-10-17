@@ -45,6 +45,8 @@ func run() -> void:
 	check(station.desktop_id == "missing.desktop" and main.pause_panel._detail.text.contains("OFFLINE"), "Offline chooser rejects stale registry choices")
 	main.backend.state = BackendClient.ConnectionState.READY
 	main.backend.state_changed.emit(main.backend.state)
+	# R6.06 requires a fresh accepted catalog after READY, not an offline cache.
+	main.backend.applications_changed.emit(fixture)
 	main.pause_panel.activate_selection()
 	check(station.desktop_id == "safe.desktop" and station.is_application_available(), "Known live registry choice maps the fixed slot")
 	check(station.application_label() == "Safe App", "Application name cannot introduce multiline prompt overflow")
@@ -69,8 +71,9 @@ func run() -> void:
 	await approach(main)
 	main._on_interaction_requested(station)
 	check(bridge.lines.size() == 1, "Known mapping sends exactly one fake launch request")
-	var request: Dictionary = JSON.parse_string(bridge.lines[0])
-	check(request.type == "launch_application" and request.desktop_id == "safe.desktop" and not request.has("exec"), "Wire request contains an ID, never a command")
+	if bridge.lines.size() == 1:
+		var request: Dictionary = JSON.parse_string(bridge.lines[0])
+		check(request.type == "launch_application" and request.desktop_id == "safe.desktop" and not request.has("exec"), "Wire request contains an ID, never a command")
 	main.backend._clear_launch_request()
 	main.backend.applications_changed.emit([])
 	main._on_interaction_requested(station)
