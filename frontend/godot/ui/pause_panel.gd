@@ -81,7 +81,8 @@ func refresh() -> void:
 			_items.assign(["%s/%s/%s/%s MOVE" % [Actions.binding_label("move_up", 1), Actions.binding_label("move_left", 1), Actions.binding_label("move_down", 1), Actions.binding_label("move_right", 1)],
 				"%s SPRINT // %s INTERACT" % [Actions.binding_label("sprint"), Actions.binding_label("interact")],
 				"%s PAUSE // %s MAP" % [Actions.binding_label("menu"), Actions.binding_label("workspace_map")],
-				"%s FEED // %s MEDIA" % [Actions.binding_label("notification_feed"), Actions.binding_label("media_console")], "ALL INPUT ACTIONS"])
+				"%s FEED // %s MEDIA" % [Actions.binding_label("notification_feed"), Actions.binding_label("media_console")],
+				"%s INSPECT // %s BACK" % [Actions.binding_label("focus_inspector"), Actions.binding_label("back")], "ALL INPUT ACTIONS"])
 			_detail.text = "CORE OFFLINE? START ./scripts/velora.sh dev"
 		"controls":
 			_items.clear()

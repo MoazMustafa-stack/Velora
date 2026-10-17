@@ -3,7 +3,8 @@ extends RefCounted
 const Actions = preload("res://scripts/input_actions.gd")
 const Store = preload("res://scripts/settings_store.gd")
 const CONTEXTS := [
-	["move_up", "move_down", "move_left", "move_right", "sprint", "interact", "menu", "back", "workspace_map", "notification_feed", "media_console"],
+	["move_up", "move_down", "move_left", "move_right", "sprint", "interact", "menu", "back", "workspace_map", "notification_feed", "media_console", "focus_inspector"],
+	["menu", "back", "focus_inspector", "workspace_map", "notification_feed", "media_console", "confirm"],
 	["menu", "back", "confirm", "nav_up", "nav_down", "nav_left", "nav_right", "page_up", "page_down", "first", "last"],
 	["menu", "back", "workspace_map", "confirm", "nav_up", "nav_down", "nav_left", "nav_right", "first", "last"],
 	["menu", "back", "notification_feed", "nav_up", "nav_down", "nav_left", "nav_right", "page_up", "page_down", "first", "last"],

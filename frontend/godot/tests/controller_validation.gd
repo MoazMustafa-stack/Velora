@@ -31,7 +31,11 @@ func run() -> void:
 	root.add_child(main)
 	await process_frame
 	for action in Actions.DEFAULTS:
-		check(InputMap.action_get_events(action).any(func(event): return event is InputEventJoypadButton or event is InputEventJoypadMotion), "Controller fallback exists for " + action)
+		var has_pad := InputMap.action_get_events(action).any(func(event): return event is InputEventJoypadButton or event is InputEventJoypadMotion)
+		if action == "focus_inspector":
+			check(not has_pad, "R6 inspector focus remains keyboard-only; no controller scope expansion")
+		else:
+			check(has_pad, "Existing controller fallback preserved for " + action)
 	await tap(JOY_BUTTON_START)
 	check(main.menu_open and Actions.controller_labels, "Controller Start opens pause and uses generic pad labels")
 	await tap(JOY_BUTTON_DPAD_DOWN)
@@ -82,6 +86,6 @@ func run() -> void:
 	check(Actions._axis_transitions.size() <= 128, "Axis history is explicitly bounded")
 	main.queue_free()
 	await process_frame
-	print("Physical controllers detected (manual acceptance still required): ", Input.get_connected_joypads().size())
+	print("Physical controllers detected (not a keyboard milestone gate): ", Input.get_connected_joypads().size())
 	if not failed: print("D6.11 controller focus, deadzone, labels and hot-plug validation passed")
 	quit(1 if failed else 0)

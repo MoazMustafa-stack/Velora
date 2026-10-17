@@ -9,6 +9,7 @@ const DEFAULTS := {
 	"menu": [KEY_ESCAPE], "back": [KEY_ESCAPE],
 	"workspace_map": [KEY_TAB, KEY_M], "notification_feed": [KEY_N],
 	"media_console": [KEY_P], "confirm": [KEY_ENTER, KEY_KP_ENTER],
+	"focus_inspector": [KEY_F],
 	"nav_up": [KEY_UP, KEY_W], "nav_down": [KEY_DOWN, KEY_S],
 	"nav_left": [KEY_LEFT, KEY_A], "nav_right": [KEY_RIGHT, KEY_D],
 	"page_up": [KEY_PAGEUP], "page_down": [KEY_PAGEDOWN],

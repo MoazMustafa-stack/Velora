@@ -9,6 +9,7 @@ const MAX_BYTES := 16384
 const MAX_BINDINGS := 4
 const ACTIONS := ["move_up", "move_down", "move_left", "move_right", "sprint",
 	"interact", "menu", "workspace_map", "notification_feed", "media_console",
+	"focus_inspector",
 	"back", "confirm", "nav_up", "nav_down", "nav_left", "nav_right",
 	"page_up", "page_down", "first", "last", "media_toggle", "media_next",
 	"media_previous", "media_stop", "media_play", "media_pause"]
