@@ -25,6 +25,7 @@ func run() -> void:
 	check(main.workshop.world_viewport.size == W.WORLD_VIEW, "Exactly 320x128 physical view")
 	check(main.workshop.stage.get_rect() == Rect2(W.WORLD), "World displays at integer 2x below header")
 	check(main.world.scale == Vector2.ONE and main.player.scale == Vector2.ONE, "Canvas change never scales physics")
+	check(main.world.get_node("Walls").collision_visibility_mode == 0, "Production walls never force the collision-debug overlay")
 	check(main.player.position == Vector2(160, 136) and main.player.walk_speed == 48.0 and main.player.sprint_speed == 72.0, "Spawn and movement units preserved")
 	for mode in main.overlays._panels:
 		main.overlays.open(mode)
