@@ -38,9 +38,16 @@ func run() -> void:
 		players.append({"handle": "p-%d" % index, "identity": "Fixture player ".repeat(8), "title": "Synthetic title ".repeat(12), "artist": "Fixture artist", "status": "playing", "can_control": true})
 	for index in range(20):
 		session.workspaces.append({"handle": "w-%d" % index, "index": index, "name": "Synthetic workspace ".repeat(8), "monitor": "Fixture", "window_count": 99, "is_active": index == 0})
+	registry.append_array([
+		{"id": "code.desktop", "name": "Synthetic long workshop editor ".repeat(8), "categories": ["Development"]},
+		{"id": "firefox.desktop", "name": "Synthetic browser", "categories": ["WebBrowser"]},
+		{"id": "kitty.desktop", "name": "Synthetic terminal", "categories": ["TerminalEmulator"]}])
 	for index in range(600):
 		registry.append({"id": "fixture-%04d.desktop" % index, "name": "Synthetic application ".repeat(8)})
 	main.backend.applications_changed.emit(registry)
+	if main.inspector != null:
+		main.selection.observe_nearby("code.desktop", registry[0])
+		main._refresh_inspector()
 	update_snapshots(0)
 	for frame in range(WARMUP_FRAMES):
 		apply_workload(frame)
@@ -65,7 +72,7 @@ func run() -> void:
 		"adapter": RenderingServer.get_video_adapter_name(), "renderer": RenderingServer.get_current_rendering_method(), "display_driver": DisplayServer.get_name(),
 		"sample_frames": SAMPLE_FRAMES, "average_fps": snappedf(fps, 0.01), "p95_frame_ms": snappedf(p95, 0.01), "maximum_frame_ms": snappedf(sorted[-1], 0.01),
 		"minimum_average_fps": MIN_FPS, "maximum_p95_frame_ms": MAX_P95_MS,
-		"workload": "movement; feed32; media16; map20; chooser600 capped512; nullable telemetry; snapshots every6 frames; registry every30 frames",
+		"workload": "movement; retained long inspector identity; feed32; media16; map20; registry603 chooser capped512; nullable telemetry; snapshots every6 frames; registry every30 frames",
 		"scope": "UI-bound synthetic stress, not live transport or wire-budget validation; preferences/backend/audio disabled"}
 	report.merge(benchmark_metadata(), true)
 	var path := OS.get_environment("VELORA_PHASE_SIX_PERF_REPORT")
@@ -90,7 +97,9 @@ func create_main() -> Node:
 	return scene
 
 func benchmark_metadata() -> Dictionary:
-	return {}
+	return {"card": "R6.03-R6.05", "native_size": [root.content_scale_size.x, root.content_scale_size.y],
+		"world_viewport": [main.workshop.world_viewport.size.x, main.workshop.world_viewport.size.y],
+		"window_size": [root.size.x, root.size.y]}
 
 func update_snapshots(frame: int) -> void:
 	telemetry.cpu.availability = "warming_up" if frame % 12 == 0 else "available"

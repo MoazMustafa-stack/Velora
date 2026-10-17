@@ -19,6 +19,8 @@ func _run() -> void:
 	main.load_preferences = false
 	main.get_node("BackendClient").auto_connect = false
 	root.add_child(main)
+	main.backend.set_process(false)
+	main.ui_audio.enabled = false
 	await process_frame
 	await process_frame
 
@@ -61,7 +63,10 @@ func _run() -> void:
 		"adapter": adapter,
 		"renderer": renderer,
 		"display_driver": display_driver,
-		"resolution": "320x180 internal / 960x540 window",
+		"native_size": [root.content_scale_size.x, root.content_scale_size.y],
+		"world_viewport": [main.workshop.world_viewport.size.x, main.workshop.world_viewport.size.y],
+		"window_size": [root.size.x, root.size.y],
+		"scope": "Production workshop; synthetic movement; no live transport, preferences or audio",
 		"sample_frames": SAMPLE_FRAMES,
 		"average_fps": snappedf(average_fps, 0.01),
 		"average_frame_ms": snappedf(average_ms, 0.01),
