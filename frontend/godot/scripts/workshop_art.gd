@@ -7,14 +7,63 @@ const KINDS := ["code", "browser", "terminal", "map", "media", "notifications", 
 const STATES := ["ready", "waiting", "failure", "offline", "disabled", "selected", "focused"]
 static var _objects: Dictionary = {}
 static var _icons: Dictionary = {}
+static var _tiles: ImageTexture
+static var _footprint: ImageTexture
 
-static func object_texture(kind: String, state: String) -> ImageTexture:
+## World-only plinth, not an icon element. Its opaque 32x18 outer edge marks
+## the exact solid body; no extra physics shape or interaction area is added.
+static func footprint_texture() -> ImageTexture:
+	if _footprint == null:
+		var image := Image.create_empty(32, 18, false, Image.FORMAT_RGBA8)
+		image.fill(W.WOOD_DARK)
+		image.fill_rect(Rect2i(1, 1, 30, 16), W.WOOD)
+		image.fill_rect(Rect2i(1, 1, 30, 2), W.BRASS)
+		image.fill_rect(Rect2i(2, 5, 28, 10), W.WOOD_DARK)
+		_footprint = ImageTexture.create_from_image(image)
+	return _footprint
+
+## Four 16px tiles: floor, a fully solid wall, walkable runner and entry rug.
+## Decorative runners have no collision and do not imply raised obstacles.
+static func tile_atlas_texture() -> ImageTexture:
+	if _tiles != null:
+		return _tiles
+	var image := Image.create_empty(64, 16, false, Image.FORMAT_RGBA8)
+	for index in range(4):
+		var origin := Vector2i(index * 16, 0)
+		image.fill_rect(Rect2i(origin, Vector2i(16, 16)), W.FLOOR)
+		image.fill_rect(Rect2i(origin + Vector2i(1, 1), Vector2i(14, 14)), W.FLOOR_LIGHT)
+		image.fill_rect(Rect2i(origin + Vector2i(3, 6), Vector2i(5, 1)), W.FLOOR)
+		image.fill_rect(Rect2i(origin + Vector2i(10, 12), Vector2i(4, 1)), W.FLOOR)
+		match index:
+			1:
+				image.fill_rect(Rect2i(origin, Vector2i(16, 16)), W.WOOD_DARK)
+				image.fill_rect(Rect2i(origin + Vector2i(1, 2), Vector2i(14, 13)), W.WALL)
+				image.fill_rect(Rect2i(origin + Vector2i(0, 0), Vector2i(16, 2)), W.BRASS)
+				image.fill_rect(Rect2i(origin + Vector2i(1, 3), Vector2i(14, 2)), W.WALL_LIGHT)
+				image.fill_rect(Rect2i(origin + Vector2i(3, 10), Vector2i(10, 1)), W.WOOD_DARK)
+			2:
+				image.fill_rect(Rect2i(origin + Vector2i(2, 0), Vector2i(12, 16)), W.WOOD_DARK)
+				for y in [3, 11]:
+					image.fill_rect(Rect2i(origin + Vector2i(4, y), Vector2i(8, 1)), W.WOOD)
+			3:
+				image.fill_rect(Rect2i(origin + Vector2i(1, 3), Vector2i(14, 10)), W.WOOD_DARK)
+				for x in range(3, 14, 4):
+					image.fill_rect(Rect2i(origin + Vector2i(x, 5), Vector2i(2, 6)), W.BRASS)
+	_tiles = ImageTexture.create_from_image(image)
+	return _tiles
+
+static func object_texture(kind: String, state: String, selected := false, focused := false) -> ImageTexture:
 	kind = kind if kind in KINDS else "unknown"
 	state = state if state in STATES else "offline"
-	var key := kind + "/" + state
+	# State badges and input ownership are independent. Selected/focused remain
+	# compatible shorthand for the contact sheet's ready-state examples.
+	var decoration := "focused" if focused or state == "focused" else "selected" if selected or state == "selected" else ""
+	state = "ready" if state in ["selected", "focused"] else state
+	var key := kind + "/" + state + "/" + decoration
 	if not _objects.has(key):
 		var image := _base_image(kind)
 		_draw_state(image, state)
+		_draw_selection(image, decoration)
 		_objects[key] = ImageTexture.create_from_image(image)
 	return _objects[key]
 
@@ -111,6 +160,7 @@ static func _draw_state(image: Image, state: String) -> void:
 	for y in range(5):
 		for x in range(5):
 			if marker[y][x] == "#": image.set_pixel(25 + x, 25 + y, ink)
+static func _draw_selection(image: Image, state: String) -> void:
 	if state in ["selected", "focused"]:
 		# Selection = corner brackets. Keyboard owner = continuous doubled rail.
 		var length := 8 if state == "selected" else 32

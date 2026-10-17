@@ -20,13 +20,16 @@ const STATE_MARKERS := Tokens.STATUS_MARKERS
 static var _station_cache: Dictionary = {}
 static var _object_cache: Dictionary = {}
 
-## The reviewable workshop family is additive until native art approval. No
-## existing station or capability changes appearance just by loading this API.
-static func workshop_object_texture(kind: String, state := "ready") -> ImageTexture:
-	return WorkshopArt.object_texture(kind, state)
+## Approved workshop presentation. Input ownership decorates, never replaces,
+## the availability/launch badge; these flags have no interaction authority.
+static func workshop_object_texture(kind: String, state := "ready", selected := false, focused := false) -> ImageTexture:
+	return WorkshopArt.object_texture(kind, state, selected, focused)
 
 static func workshop_icon_texture(kind: String) -> ImageTexture:
 	return WorkshopArt.icon_texture(kind)
+
+static func workshop_footprint_texture() -> ImageTexture:
+	return WorkshopArt.footprint_texture()
 
 static func workstation_texture(state: String, accent: Color, kind: String) -> ImageTexture:
 	state = state if STATE_MARKERS.has(state) else "offline"
@@ -90,9 +93,14 @@ static func create_tileset() -> TileSet:
 	_draw_wall_tile(image, Vector2i(16, 0))
 	_draw_floor_tile(image, Vector2i(32, 0), true)
 	_draw_threshold_tile(image, Vector2i(48, 0))
+	return _tileset_from_texture(ImageTexture.create_from_image(image))
 
+static func create_workshop_tileset() -> TileSet:
+	return _tileset_from_texture(WorkshopArt.tile_atlas_texture())
+
+static func _tileset_from_texture(texture: ImageTexture) -> TileSet:
 	var atlas := TileSetAtlasSource.new()
-	atlas.texture = ImageTexture.create_from_image(image)
+	atlas.texture = texture
 	atlas.texture_region_size = TILE_SIZE
 	for tile_x in range(4):
 		atlas.create_tile(Vector2i(tile_x, 0))

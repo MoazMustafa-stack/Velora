@@ -27,6 +27,11 @@ func run() -> void:
 	check(Art.workshop_object_texture("untrusted-kind", "invalid-state") == Art.workshop_object_texture("unknown", "offline"), "Unknown keys normalize before cache lookup")
 	check(Art.workshop_icon_texture("untrusted-kind") == Art.workshop_icon_texture("unknown"), "Unknown applications share the bounded category fallback")
 	check(Art.workshop_icon_texture("unknown").get_size() == Vector2(16, 16), "Native inspector icon size")
+	check(Art.workshop_footprint_texture().get_size() == Vector2(32, 18), "Visible world bases match the existing collision footprint")
+	check(Art.workshop_footprint_texture() == Art.workshop_footprint_texture(), "World bases are generated once")
+	var failed_selected: Image = Art.workshop_object_texture("code", "failure", true).get_image()
+	check(failed_selected.get_pixel(0, 0) == W.FOCUS and failed_selected.get_pixel(27, 25) == W.FAILURE, "Selection decoration never hides failure state")
+	check(failed_selected.get_data() != Art.workshop_object_texture("code", "failure", true, true).get_image().get_data(), "Input ownership remains distinct on failed objects")
 	var silhouettes: Array[String] = []
 	var icons: Array[String] = []
 	for kind in ["code", "browser", "terminal", "map", "media", "notifications", "observatory", "unknown"]:
