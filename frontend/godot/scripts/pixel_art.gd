@@ -2,6 +2,7 @@ class_name VeloraPixelArt
 extends RefCounted
 
 const Tokens = preload("res://ui/design_tokens.gd")
+const WorkshopArt = preload("res://scripts/workshop_art.gd")
 
 const TILE_SIZE := Tokens.TILE_SIZE
 const DEEP_NAVY := Tokens.WORLD_BACKGROUND
@@ -18,6 +19,14 @@ const SHADOW := Tokens.WORLD_SHADOW
 const STATE_MARKERS := Tokens.STATUS_MARKERS
 static var _station_cache: Dictionary = {}
 static var _object_cache: Dictionary = {}
+
+## The reviewable workshop family is additive until native art approval. No
+## existing station or capability changes appearance just by loading this API.
+static func workshop_object_texture(kind: String, state := "ready") -> ImageTexture:
+	return WorkshopArt.object_texture(kind, state)
+
+static func workshop_icon_texture(kind: String) -> ImageTexture:
+	return WorkshopArt.icon_texture(kind)
 
 static func workstation_texture(state: String, accent: Color, kind: String) -> ImageTexture:
 	state = state if STATE_MARKERS.has(state) else "offline"

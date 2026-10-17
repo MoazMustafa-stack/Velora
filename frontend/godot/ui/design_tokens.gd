@@ -1,6 +1,6 @@
 extends RefCounted
-## Semantic palette and fixed-canvas geometry. World variants deliberately
-## retain their original values; this foundation does not recolor the art.
+## Semantic palette and fixed-canvas geometry. Root values remain the legacy
+## runtime contract until the reviewed workshop replaces it, not a theme toggle.
 
 const CANVAS := Vector2i(320, 180)
 const TILE_SIZE := Vector2i(16, 16)
@@ -36,3 +36,44 @@ const WORLD_ACCENT := Color("41d6c3")
 const WORLD_AMBER := Color("f5b942")
 const WORLD_TEXT := Color("dce6f2")
 const WORLD_SHADOW := Color("070a13")
+
+## Approved density; proposed visual system. R6.02 contact-sheet review precedes
+## production world migration. All lengths here are native UI pixels, not physics.
+class Workshop:
+	const CANVAS := Vector2i(640, 360)
+	const WORLD_VIEW := Vector2i(320, 128)
+	const HEADER := Rect2i(0, 0, 640, 24)
+	const WORLD := Rect2i(0, 24, 640, 256)
+	const INSPECTOR := Rect2i(0, 280, 640, 80)
+	const SPACE := 8
+	const FONT_BODY := 12
+	const FONT_TITLE := 14
+	const OUTLINE_WIDTH := 1
+	const FOCUS_WIDTH := 2
+	const BACKGROUND := Color("15172b")
+	const PANEL := Color("252236")
+	const SURFACE := Color("30304a")
+	const OUTLINE := Color("776477")
+	const TEXT := Color("f4e3d5")
+	const MUTED := Color("b5abc1")
+	const ACCENT := Color("ffcb85")
+	const FOCUS := Color("ffe1a7")
+	const READY := Color("9ce4dc")
+	const WAITING := Color("e5c27f")
+	const FAILURE := Color("f39b9d")
+	const DISABLED := Color("b0a5b9")
+	const FLOOR := Color("302c43")
+	const FLOOR_LIGHT := Color("343047")
+	const WALL := Color("60546e")
+	const WALL_LIGHT := Color("78647b")
+	const SHADOW := Color("151326")
+	const WOOD := Color("8b6a66")
+	const WOOD_DARK := Color("5e4f67")
+	const BRASS := Color("b9a591")
+	const STATUS_MARKERS := {
+		"ready": ["....#", "...#.", "#.#..", ".#...", "....."],
+		"waiting": ["#####", ".#.#.", "..#..", ".#.#.", "#####"],
+		"failure": ["..#..", "..#..", "..#..", ".....", "..#.."],
+		"offline": ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
+		"disabled": [".....", ".....", "#####", ".....", "....."],
+	}

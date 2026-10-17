@@ -46,6 +46,7 @@ run_godot() {
 run_godot scene --quit-after 5
 run_godot design-tokens --script res://tests/design_tokens_validation.gd
 run_godot workshop-layout --script res://tests/workshop_layout_validation.gd
+run_godot workshop-art --script res://tests/workshop_art_validation.gd
 run_godot application-selection --script res://tests/application_selection_validation.gd
 run_godot panel-primitives --script res://tests/panel_primitives_validation.gd
 run_godot settings --script res://tests/settings_validation.gd
