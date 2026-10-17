@@ -1,4 +1,56 @@
-# R6.01 native density proof — accepted
+# Workshop implementation and review
+
+## R6.02–R6.05 implementation checkpoint — 2026-10-17
+
+Owner approved the native warm palette, typography, icons and state markers
+before world integration. R6.02's contact sheet is accepted; R6.03–R6.05 are
+implemented and in review, not yet accepted as a release. Combined graphical
+gate is pending on the integrated head; focused checks below actually passed.
+No R6.06 dispatcher, quick launcher, filesystem feature or panel-wide redesign
+was added. Nothing from this implementation session has been pushed or merged.
+
+Production now uses 640×360 with a 24-pixel header, a 320×128 unscaled world
+view enlarged 2× into (0,24)..(640,280), and an 80-pixel persistent inspector.
+The 320×192 physics room, 16-unit tiles, spawn (160,136), speeds 48/72,
+seven object positions, collision and facing distances remain unchanged.
+Existing modal shells retain their behavior, with compact padding and 2×
+placement inside the world band. They do not shade or obscure the inspector.
+The historical 320 HUD/proof fixtures explicitly bypass production composition;
+they are comparison coverage, not claims that the new interface passed.
+
+Focused evidence: byte-identical legacy art cleanup (22 images), semantic
+contrast/silhouette/state checks, 20 selection-model checks, 36 inspector-view
+checks, actual seven-object physics routes, integrated keyboard/remapping/
+late-close checks, and fake-bridge registry/session/launch/restart integration.
+All are registered in the headless harness. The native production fixture
+exported synthetic 640-native, grayscale and 720p/1080p integer frames with all
+seven objects reached and visible; final combined-head rendering/performance
+must still be rerun. The first native review found forced collision-debug tint
+in the old scene; 1121176 removes it with a failing-then-passing regression.
+
+Key commits: 609080e mechanical cleanup; fd2b3ce selection model; f40103c
+visual system; 52d4202 native sheet; 30317d8 composition; cbcfa64 test typing;
+4eb280b independent state/focus decoration; ed3bd7f application art; c30bc41
+capability/environment art; 5580979 inspector view; cd12beb remappable action;
+3f52f4a context wiring; 21ba625 accepted backend feedback; 1121176 debug tint;
+240b67b shared bounded text; 01fba09 production capture/performance metadata.
+
+F is the default focus-inspector action, conflict-checked and remappable with
+validated defaults for older settings. Escape restores the prior useful input
+context. Inspector visibility does not lock movement; explicit focus does.
+World activation uses only Player.active_interactable, never retained selection.
+Inspector confirmation returns to the world; it does not launch. BackendClient
+continues to own request IDs, transport/reconnect and accepted snapshot order.
+Running observations reuse SessionBinding and the accepted cached snapshot;
+stale observations and launch acceptance are labelled honestly.
+
+Remaining owner checks: room/art identity and grayscale, all seven actual
+keyboard approaches/collisions, F/Back and remapped focus/confirm, modal input
+recovery, and a real-session Core restart while paused. The native art-sheet
+approval does not automatically approve those later behaviors. No CI result
+or physical fullscreen benchmark at both export sizes is claimed.
+
+## R6.01 native density proof — accepted historical checkpoint
 
 Branch: workshop-foundation, from documentation head f660337 / experience
 baseline fc9ce6e. On 2026-10-16 the owner approved the 640×360 native canvas
@@ -45,9 +97,9 @@ JSON and synthetic native/scaled/grayscale frames are retained privately.
 ## Acceptance
 
 R6.01's native proof and density decision are accepted: **640×360 with the lower
-inspector**. R6.02–R6.05 remain unstarted. Production project.godot, design
-tokens, world art and physics remain
-unchanged. Initial candidate renders, all seven approach/visibility checks and
+inspector**. At that checkpoint R6.02–R6.05 were unstarted; production
+project.godot, design tokens, world art and physics remained unchanged.
+Initial candidate renders, all seven approach/visibility checks and
 both benchmark workloads pass. Final combined-code-head validation at 41f01ec:
 `check`, `ipc-check` and the full graphical `gate` all PASS. 226 Rust tests,
 strict Clippy, all frontend/static-security/private-bus/resource checks, owned
@@ -74,8 +126,8 @@ All broader manual release checks and later-card implementation remain pending.
 
 This approval closes the R6.01 density-proof card only. It does not assert that
 the production frontend already uses the new canvas or that Phase 6 is complete.
-The owner requested review and branch publication for now; do not start R6.02
-or later as part of that publication task.
+The 2026-10-16 publication-only task stopped there. The owner separately
+authorized implementation continuation on 2026-10-17, as recorded above.
 
 ## Reproduce
 

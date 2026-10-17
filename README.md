@@ -52,15 +52,22 @@ a cumulative automated gate and crowded-UI benchmark; manual acceptance is still
 pending. See the [release checklist](frontend/godot/RELEASE_REVIEW.md).
 Phase 6 is not complete or released merely because automated checks pass.
 On 2026-10-16 the visual direction was revised to a walkable pixel workshop
-with a persistent application inspector. Native layout/resolution validation
-comes first; the redesign is planned, not implemented or accepted. Existing
-systems and regression evidence are retained. See the
+with a persistent application inspector. R6.01's density proof was accepted,
+and on 2026-10-17 the owner approved R6.02's warm visual system. R6.03–R6.05
+now implement the 640×360 composition, seven-object workshop, separate
+nearby/selected identity, remappable inspector focus (F by default), and a
+persistent bounded inspector. Final native room/keyboard acceptance remains
+in review; R6.06 and later are not implemented. Existing systems and regression
+evidence are retained. See the
 [workshop implementation plan](frontend/godot/WORKSHOP_PLAN.md).
 R6.01 now has an isolated native 320×180 / 640×360 blockout with passing local
 checks and rendered benchmarks. The owner approved 640×360 with the lower
 inspector on 2026-10-16; R6.01's density-proof card is complete.
-It is not a production UI replacement. See the
-[native proof and review limits](frontend/godot/WORKSHOP_REVIEW.md).
+The production world still uses unscaled physics in a 320×128 viewport,
+enlarged 2× beneath a compact header. Inspection never grants remote launch
+authority: approach a station and use E/Enter; F explicitly focuses inspection,
+and Escape restores context. Inspector launch controls await R6.06. See the
+[implementation evidence and review limits](frontend/godot/WORKSHOP_REVIEW.md).
 See the [roadmap](ROADMAP.md) for the bounded Desktop-file direction after
 current acceptance; document opening and folder traversal are not implemented.
 

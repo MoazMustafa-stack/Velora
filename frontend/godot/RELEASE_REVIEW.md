@@ -13,6 +13,12 @@ controller checks remain regression protection, not a supported-product claim.
 
 ## Automated gate
 
+R6.02 visual-sheet approval is recorded for 2026-10-17. R6.03–R6.05 production
+work is implemented; combined gate and owner room/keyboard review are pending
+at this checkpoint. See [WORKSHOP_REVIEW.md](WORKSHOP_REVIEW.md) for per-card
+evidence. F focuses inspection by default (remappable); E/Enter still acts only
+on a physically nearby object. Inspector launch actions are not implemented.
+
 Run from the repository root in a graphical session:
 
 ```bash

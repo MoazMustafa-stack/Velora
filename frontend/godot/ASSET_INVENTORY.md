@@ -1,13 +1,14 @@
 # Fixed-canvas visual inventory
 
-## R6.02 workshop family — native review pending (2026-10-17)
+## R6.02 workshop family — native visual sheet approved (2026-10-17)
 
 The owner-approved density is 640 × 360 with a lower 80-pixel inspector and
 24-pixel header. `design_tokens.gd.Workshop` defines proposed warm ink, lavender
 surfaces, brass/wood details, readable body/title typography (12/14 px), spacing,
 outlines and semantic status colors. The root token constants remain the legacy
-runtime contract until the reviewed world/inspector migration; there is no
-production theme or resolution selector.
+domain-panel/fixture contract during the staged migration; the production world,
+header and inspector use Workshop tokens. There is no production theme or
+resolution selector; broader domain-panel harmonization remains R6.08.
 
 `scripts/workshop_art.gd`, accessed through `pixel_art.gd`, generates the proposed
 family deterministically. World textures remain 32 × 32 **world pixels**; native
@@ -32,7 +33,8 @@ require distinct silhouettes/icons and monochrome state markers. Text/status
 colors have at least 4.5:1 contrast against the proposed inspector panel. These
 static assets introduce no animation, flashing or reduced-motion exceptions.
 
-There are at most 8 × 7 cached object textures and 8 icons; unknown kind/state
+There are at most 8 × 5 × 3 cached object textures (five statuses, three input
+decorations), 8 icons, one tile atlas and one collision-footprint texture; unknown kind/state
 strings normalize **before** lookup. No random seeds, runtime downloads,
 external SVG/icon parsing, host files or live snapshots are involved. All pixel
 geometry is original project source covered by the root BSD-3-Clause license.
@@ -43,8 +45,10 @@ or downloaded into this repository.
 The mechanical status-marker/accent consolidation at `609080e` preserved all
 22 legacy generated image hashes (nine station states, four capabilities, tile
 atlas, eight player frames). Intentional workshop art is a separate additive
-API: the normal application still renders the existing room. Owner native
-visual approval is required before R6.03 adopts this family.
+API. Owner native-sheet approval authorized R6.03 to adopt this family; the
+normal application now uses it. Warm floor plinths mark the unchanged 32 × 18
+collision footprint separately from the icon sprites. Native integrated room
+and keyboard acceptance remains distinct from the approved contact sheet.
 
 For the synthetic native contact sheet (no Core, settings or private data):
 

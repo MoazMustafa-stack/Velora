@@ -2,7 +2,9 @@
 
 Decision date: 2026-10-16. Status: direction and R6.01 native proof accepted.
 The owner selected 640×360 with the lower inspector after local validation.
-R6.02–R6.10 production implementation has not started. See WORKSHOP_REVIEW.md.
+R6.02's native visual system was owner-approved on 2026-10-17. R6.03–R6.05
+are implemented and undergoing combined automation/native owner review.
+R6.06 and later have not started. See WORKSHOP_REVIEW.md for actual evidence.
 This document supersedes the old Phase 6 visual target, not its implementation
 history or security/regression requirements. New cards use R6 identifiers so
 existing D6.01–D6.13 cards and evidence remain intelligible.
@@ -141,8 +143,9 @@ parallel UI system or a generic multi-renderer architecture.
 ## 6. Kanban cards
 
 R6.01 is **Done (native density proof)** after its native proof, full local gate
-and owner approval of 640×360 with the lower inspector. R6.02–R6.10 remain
-**Todo**. No card is done because a
+and owner approval of 640×360 with the lower inspector. R6.02's proposed art
+and native sheet are approved; R6.03–R6.05 are **Implemented / In Review**,
+not accepted from code presence. R6.06–R6.10 remain **Todo**. No card is done because a
 corresponding mockup or old implementation exists. Each card includes
 focused tests with its implementation, not a testing phase deferred to the end.
 
