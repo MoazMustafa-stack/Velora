@@ -5,6 +5,7 @@ extends RefCounted
 ## node reference, socket, persistence or launch/request state belongs here.
 
 const Store = preload("res://scripts/settings_store.gd")
+const DisplayText = preload("res://scripts/display_text.gd")
 const MAX_NAME_CHARACTERS := 128
 const MAX_CATEGORIES := 8
 const MAX_CATEGORY_CHARACTERS := 48
@@ -36,7 +37,7 @@ func _apply_application(application: Dictionary) -> void:
 		and categories_value is Array
 	if not _available:
 		return
-	_name = _display_label(name_value, MAX_NAME_CHARACTERS)
+	_name = DisplayText.single_line(name_value, MAX_NAME_CHARACTERS)
 	if _name.is_empty():
 		_name = _selected_id.left(MAX_NAME_CHARACTERS)
 	_categories.clear()
@@ -44,20 +45,7 @@ func _apply_application(application: Dictionary) -> void:
 		var category = categories_value[index]
 		if not category is String:
 			continue
-		_categories.append(_display_label(category, MAX_CATEGORY_CHARACTERS))
-
-static func _display_label(text: String, maximum: int) -> String:
-	var result := ""
-	for index in range(mini(text.length(), maximum)):
-		var codepoint := text.unicode_at(index)
-		# Keep Unicode text/emoji, but no terminal controls, new lines or bidi overrides.
-		if codepoint < 32 or (codepoint >= 127 and codepoint <= 159) \
-			or codepoint in [0x2028, 0x2029] or (codepoint >= 0x202a and codepoint <= 0x202e) \
-			or (codepoint >= 0x2066 and codepoint <= 0x2069):
-			result += " "
-		else:
-			result += text[index]
-	return result.strip_edges()
+		_categories.append(DisplayText.single_line(category, MAX_CATEGORY_CHARACTERS))
 
 ## Reconcile only the selected record; do not retain or duplicate the catalog.
 ## Call only for complete accepted snapshots, not a disconnected client's reset.
